@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { RequestHandler } from 'express';
-import { OAuthRegisteredClientsStore } from '../clients.js';
-import { OAuthClientInformationFull } from '../../../shared/auth.js';
+import type { RequestHandler } from 'express';
+import type { OAuthRegisteredClientsStore } from '../clients.js';
+import type { OAuthClientInformationFull } from '../../../shared/auth.js';
 import { InvalidRequestError, InvalidClientError, ServerError, OAuthError } from '../errors.js';
 
 export type ClientAuthenticationMiddlewareOptions = {

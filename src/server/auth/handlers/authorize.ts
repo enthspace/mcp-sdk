@@ -1,8 +1,9 @@
-import { RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import express from 'express';
-import { OAuthServerProvider } from '../provider.js';
-import { rateLimit, Options as RateLimitOptions } from 'express-rate-limit';
+import type { OAuthServerProvider } from '../provider.js';
+import type { Options as RateLimitOptions } from 'express-rate-limit';
+import { rateLimit } from 'express-rate-limit';
 import { allowedMethods } from '../middleware/allowedMethods.js';
 import { InvalidRequestError, InvalidClientError, InvalidScopeError, ServerError, TooManyRequestsError, OAuthError } from '../errors.js';
 

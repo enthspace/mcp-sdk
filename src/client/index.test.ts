@@ -1,35 +1,44 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable no-constant-binary-expression */
 /* eslint-disable @typescript-eslint/no-unused-expressions */
+import { describe, it, test, expect, vi } from 'vitest';
 import { Client } from './index.js';
 import { z } from 'zod';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../constants.js';
+import { ErrorCode } from '../errors.js';
+import type {
+    CallToolRequest,
+    CreateMessageRequest,
+    ElicitRequest,
+    InitializeRequest,
+    ListResourcesRequest,
+    ListRootsRequest,
+    ListToolsRequest
+} from '@enth/mcp-specs/draft';
 import {
-    RequestSchema,
-    NotificationSchema,
-    ResultSchema,
     LATEST_PROTOCOL_VERSION,
-    SUPPORTED_PROTOCOL_VERSIONS,
-    InitializeRequestSchema,
-    ListResourcesRequestSchema,
-    ListToolsRequestSchema,
-    CallToolRequestSchema,
-    CreateMessageRequestSchema,
-    ElicitRequestSchema,
-    ListRootsRequestSchema,
-    ErrorCode
-} from '../types.js';
-import { Transport } from '../shared/transport.js';
+    validateInitializeRequest,
+    validateListResourcesRequest,
+    validateListToolsRequest,
+    validateCreateMessageRequest,
+    validateListRootsRequest,
+    validateElicitRequest,
+    validateCallToolRequest
+} from '@enth/mcp-specs/draft';
+import type { Transport } from '../shared/transport.js';
 import { Server } from '../server/index.js';
 import { InMemoryTransport } from '../inMemory.js';
+import type { JsonSchemaType } from '@enth/mcp-specs';
+import { AjvJsonSchemaValidatorProvider } from 'src/ajv/index.js';
 
 /***
  * Test: Initialize with Matching Protocol Version
  */
 test('should initialize with matching protocol version', async () => {
     const clientTransport: Transport = {
-        start: jest.fn().mockResolvedValue(undefined),
-        close: jest.fn().mockResolvedValue(undefined),
-        send: jest.fn().mockImplementation(message => {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(message => {
             if (message.method === 'initialize') {
                 clientTransport.onmessage?.({
                     jsonrpc: '2.0',
@@ -86,9 +95,9 @@ test('should initialize with matching protocol version', async () => {
 test('should initialize with supported older protocol version', async () => {
     const OLD_VERSION = SUPPORTED_PROTOCOL_VERSIONS[1];
     const clientTransport: Transport = {
-        start: jest.fn().mockResolvedValue(undefined),
-        close: jest.fn().mockResolvedValue(undefined),
-        send: jest.fn().mockImplementation(message => {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(message => {
             if (message.method === 'initialize') {
                 clientTransport.onmessage?.({
                     jsonrpc: '2.0',
@@ -136,9 +145,9 @@ test('should initialize with supported older protocol version', async () => {
  */
 test('should reject unsupported protocol version', async () => {
     const clientTransport: Transport = {
-        start: jest.fn().mockResolvedValue(undefined),
-        close: jest.fn().mockResolvedValue(undefined),
-        send: jest.fn().mockImplementation(message => {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(message => {
             if (message.method === 'initialize') {
                 clientTransport.onmessage?.({
                     jsonrpc: '2.0',
@@ -192,7 +201,7 @@ test('should connect new client to old, supported server version', async () => {
         }
     );
 
-    server.setRequestHandler(InitializeRequestSchema, _request => ({
+    server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, _request => ({
         protocolVersion: OLD_VERSION,
         capabilities: {
             resources: {},
@@ -204,11 +213,11 @@ test('should connect new client to old, supported server version', async () => {
         }
     }));
 
-    server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    server.setRequestHandler('resources/list' satisfies ListResourcesRequest['method'], validateListResourcesRequest, () => ({
         resources: []
     }));
 
-    server.setRequestHandler(ListToolsRequestSchema, () => ({
+    server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, () => ({
         tools: []
     }));
 
@@ -217,8 +226,8 @@ test('should connect new client to old, supported server version', async () => {
     const client = new Client(
         {
             name: 'new client',
-            version: '1.0',
-            protocolVersion: LATEST_PROTOCOL_VERSION
+            version: '1.0'
+            // protocolVersion: LATEST_PROTOCOL_VERSION
         },
         {
             capabilities: {
@@ -254,7 +263,7 @@ test('should negotiate version when client is old, and newer server supports its
         }
     );
 
-    server.setRequestHandler(InitializeRequestSchema, _request => ({
+    server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, _request => ({
         protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {
             resources: {},
@@ -266,11 +275,11 @@ test('should negotiate version when client is old, and newer server supports its
         }
     }));
 
-    server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    server.setRequestHandler('resources/list' satisfies ListResourcesRequest['method'], validateListResourcesRequest, () => ({
         resources: []
     }));
 
-    server.setRequestHandler(ListToolsRequestSchema, () => ({
+    server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, () => ({
         tools: []
     }));
 
@@ -279,8 +288,8 @@ test('should negotiate version when client is old, and newer server supports its
     const client = new Client(
         {
             name: 'old client',
-            version: '1.0',
-            protocolVersion: OLD_VERSION
+            version: '1.0'
+            // protocolVersion: OLD_VERSION
         },
         {
             capabilities: {
@@ -317,7 +326,7 @@ test("should throw when client is old, and server doesn't support its version", 
         }
     );
 
-    server.setRequestHandler(InitializeRequestSchema, _request => ({
+    server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, _request => ({
         protocolVersion: FUTURE_VERSION,
         capabilities: {
             resources: {},
@@ -329,11 +338,11 @@ test("should throw when client is old, and server doesn't support its version", 
         }
     }));
 
-    server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    server.setRequestHandler('resources/list' satisfies ListResourcesRequest['method'], validateListResourcesRequest, () => ({
         resources: []
     }));
 
-    server.setRequestHandler(ListToolsRequestSchema, () => ({
+    server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, () => ({
         tools: []
     }));
 
@@ -342,8 +351,8 @@ test("should throw when client is old, and server doesn't support its version", 
     const client = new Client(
         {
             name: 'old client',
-            version: '1.0',
-            protocolVersion: OLD_VERSION
+            version: '1.0'
+            // protocolVersion: OLD_VERSION
         },
         {
             capabilities: {
@@ -376,7 +385,7 @@ test('should respect server capabilities', async () => {
         }
     );
 
-    server.setRequestHandler(InitializeRequestSchema, _request => ({
+    server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, _request => ({
         protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {
             resources: {},
@@ -388,11 +397,11 @@ test('should respect server capabilities', async () => {
         }
     }));
 
-    server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    server.setRequestHandler('resources/list' satisfies ListResourcesRequest['method'], validateListResourcesRequest, () => ({
         resources: []
     }));
 
-    server.setRequestHandler(ListToolsRequestSchema, () => ({
+    server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, () => ({
         tools: []
     }));
 
@@ -546,7 +555,7 @@ test('should only allow setRequestHandler for declared capabilities', () => {
 
     // This should work because sampling is a declared capability
     expect(() => {
-        client.setRequestHandler(CreateMessageRequestSchema, () => ({
+        client.setRequestHandler('sampling/createMessage' satisfies CreateMessageRequest['method'], validateCreateMessageRequest, () => ({
             model: 'test-model',
             role: 'assistant',
             content: {
@@ -558,7 +567,7 @@ test('should only allow setRequestHandler for declared capabilities', () => {
 
     // This should throw because roots listing is not a declared capability
     expect(() => {
-        client.setRequestHandler(ListRootsRequestSchema, () => ({}));
+        client.setRequestHandler('roots/list' satisfies ListRootsRequest['method'], validateListRootsRequest, () => ({}));
     }).toThrow('Client does not support roots capability');
 });
 
@@ -577,7 +586,7 @@ test('should allow setRequestHandler for declared elicitation capability', () =>
 
     // This should work because elicitation is a declared capability
     expect(() => {
-        client.setRequestHandler(ElicitRequestSchema, () => ({
+        client.setRequestHandler('elicitation/create' satisfies ElicitRequest['method'], validateElicitRequest, () => ({
             action: 'accept',
             content: {
                 username: 'test-user',
@@ -588,7 +597,7 @@ test('should allow setRequestHandler for declared elicitation capability', () =>
 
     // This should throw because sampling is not a declared capability
     expect(() => {
-        client.setRequestHandler(CreateMessageRequestSchema, () => ({
+        client.setRequestHandler('sampling/createMessage' satisfies CreateMessageRequest['method'], validateCreateMessageRequest, () => ({
             model: 'test-model',
             role: 'assistant',
             content: {
@@ -604,14 +613,14 @@ test('should allow setRequestHandler for declared elicitation capability', () =>
  * Test that custom request/notification/result schemas can be used with the Client class.
  */
 test('should typecheck', () => {
-    const GetWeatherRequestSchema = RequestSchema.extend({
+    const GetWeatherRequestSchema = z.object({
         method: z.literal('weather/get'),
         params: z.object({
             city: z.string()
         })
     });
 
-    const GetForecastRequestSchema = RequestSchema.extend({
+    const GetForecastRequestSchema = z.object({
         method: z.literal('weather/forecast'),
         params: z.object({
             city: z.string(),
@@ -619,7 +628,7 @@ test('should typecheck', () => {
         })
     });
 
-    const WeatherForecastNotificationSchema = NotificationSchema.extend({
+    const WeatherForecastNotificationSchema = z.object({
         method: z.literal('weather/alert'),
         params: z.object({
             severity: z.enum(['warning', 'watch']),
@@ -629,7 +638,7 @@ test('should typecheck', () => {
 
     const WeatherRequestSchema = GetWeatherRequestSchema.or(GetForecastRequestSchema);
     const WeatherNotificationSchema = WeatherForecastNotificationSchema;
-    const WeatherResultSchema = ResultSchema.extend({
+    const WeatherResultSchema = z.object({
         temperature: z.number(),
         conditions: z.string()
     });
@@ -690,12 +699,16 @@ test('should handle client cancelling a request', async () => {
     );
 
     // Set up server to delay responding to listResources
-    server.setRequestHandler(ListResourcesRequestSchema, async (request, extra) => {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        return {
-            resources: []
-        };
-    });
+    server.setRequestHandler(
+        'resources/list' satisfies ListResourcesRequest['method'],
+        validateListResourcesRequest,
+        async (request, extra) => {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return {
+                resources: []
+            };
+        }
+    );
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -741,17 +754,21 @@ test('should handle request timeout', async () => {
     );
 
     // Set up server with a delayed response
-    server.setRequestHandler(ListResourcesRequestSchema, async (_request, extra) => {
-        const timer = new Promise(resolve => {
-            const timeout = setTimeout(resolve, 100);
-            extra.signal.addEventListener('abort', () => clearTimeout(timeout));
-        });
+    server.setRequestHandler(
+        'resources/list' satisfies ListResourcesRequest['method'],
+        validateListResourcesRequest,
+        async (_request, extra) => {
+            const timer = new Promise(resolve => {
+                const timeout = setTimeout(resolve, 100);
+                extra.signal.addEventListener('abort', () => clearTimeout(timeout));
+            });
 
-        await timer;
-        return {
-            resources: []
-        };
-    });
+            await timer;
+            return {
+                resources: []
+            };
+        }
+    );
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -791,7 +808,7 @@ describe('outputSchema validation', () => {
         );
 
         // Set up server handlers
-        server.setRequestHandler(InitializeRequestSchema, async request => ({
+        server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, async request => ({
             protocolVersion: request.params.protocolVersion,
             capabilities: {},
             serverInfo: {
@@ -800,7 +817,7 @@ describe('outputSchema validation', () => {
             }
         }));
 
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, async () => ({
             tools: [
                 {
                     name: 'test-tool',
@@ -822,19 +839,25 @@ describe('outputSchema validation', () => {
             ]
         }));
 
-        server.setRequestHandler(CallToolRequestSchema, async request => {
+        server.setRequestHandler('tools/call' satisfies CallToolRequest['method'], validateCallToolRequest, async request => {
             if (request.params.name === 'test-tool') {
                 return {
+                    content: [],
                     structuredContent: { result: 'success', count: 42 }
                 };
             }
             throw new Error('Unknown tool');
         });
 
-        const client = new Client({
-            name: 'test-client',
-            version: '1.0.0'
-        });
+        const client = new Client(
+            {
+                name: 'test-client',
+                version: '1.0.0'
+            },
+            {
+                jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
+            }
+        );
 
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -865,7 +888,7 @@ describe('outputSchema validation', () => {
         );
 
         // Set up server handlers
-        server.setRequestHandler(InitializeRequestSchema, async request => ({
+        server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, async request => ({
             protocolVersion: request.params.protocolVersion,
             capabilities: {},
             serverInfo: {
@@ -874,7 +897,7 @@ describe('outputSchema validation', () => {
             }
         }));
 
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, async () => ({
             tools: [
                 {
                     name: 'test-tool',
@@ -896,7 +919,7 @@ describe('outputSchema validation', () => {
             ]
         }));
 
-        server.setRequestHandler(CallToolRequestSchema, async request => {
+        server.setRequestHandler('tools/call' satisfies CallToolRequest['method'], validateCallToolRequest, async request => {
             if (request.params.name === 'test-tool') {
                 // Return invalid structured content (count is string instead of number)
                 return {
@@ -939,7 +962,7 @@ describe('outputSchema validation', () => {
         );
 
         // Set up server handlers
-        server.setRequestHandler(InitializeRequestSchema, async request => ({
+        server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, async request => ({
             protocolVersion: request.params.protocolVersion,
             capabilities: {},
             serverInfo: {
@@ -948,7 +971,7 @@ describe('outputSchema validation', () => {
             }
         }));
 
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, async () => ({
             tools: [
                 {
                     name: 'test-tool',
@@ -968,7 +991,7 @@ describe('outputSchema validation', () => {
             ]
         }));
 
-        server.setRequestHandler(CallToolRequestSchema, async request => {
+        server.setRequestHandler('tools/call' satisfies CallToolRequest['method'], validateCallToolRequest, async request => {
             if (request.params.name === 'test-tool') {
                 // Return content instead of structuredContent
                 return {
@@ -1013,7 +1036,7 @@ describe('outputSchema validation', () => {
         );
 
         // Set up server handlers
-        server.setRequestHandler(InitializeRequestSchema, async request => ({
+        server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, async request => ({
             protocolVersion: request.params.protocolVersion,
             capabilities: {},
             serverInfo: {
@@ -1022,7 +1045,7 @@ describe('outputSchema validation', () => {
             }
         }));
 
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, async () => ({
             tools: [
                 {
                     name: 'test-tool',
@@ -1036,7 +1059,7 @@ describe('outputSchema validation', () => {
             ]
         }));
 
-        server.setRequestHandler(CallToolRequestSchema, async request => {
+        server.setRequestHandler('tools/call' satisfies CallToolRequest['method'], validateCallToolRequest, async request => {
             if (request.params.name === 'test-tool') {
                 // Return regular content
                 return {
@@ -1080,7 +1103,7 @@ describe('outputSchema validation', () => {
         );
 
         // Set up server handlers
-        server.setRequestHandler(InitializeRequestSchema, async request => ({
+        server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, async request => ({
             protocolVersion: request.params.protocolVersion,
             capabilities: {},
             serverInfo: {
@@ -1089,7 +1112,7 @@ describe('outputSchema validation', () => {
             }
         }));
 
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, async () => ({
             tools: [
                 {
                     name: 'complex-tool',
@@ -1124,9 +1147,10 @@ describe('outputSchema validation', () => {
             ]
         }));
 
-        server.setRequestHandler(CallToolRequestSchema, async request => {
+        server.setRequestHandler('tools/call' satisfies CallToolRequest['method'], validateCallToolRequest, async request => {
             if (request.params.name === 'complex-tool') {
                 return {
+                    content: [],
                     structuredContent: {
                         name: 'John Doe',
                         age: 30,
@@ -1141,10 +1165,15 @@ describe('outputSchema validation', () => {
             throw new Error('Unknown tool');
         });
 
-        const client = new Client({
-            name: 'test-client',
-            version: '1.0.0'
-        });
+        const client = new Client(
+            {
+                name: 'test-client',
+                version: '1.0.0'
+            },
+            {
+                jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
+            }
+        );
 
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -1178,7 +1207,7 @@ describe('outputSchema validation', () => {
         );
 
         // Set up server handlers
-        server.setRequestHandler(InitializeRequestSchema, async request => ({
+        server.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, async request => ({
             protocolVersion: request.params.protocolVersion,
             capabilities: {},
             serverInfo: {
@@ -1187,7 +1216,7 @@ describe('outputSchema validation', () => {
             }
         }));
 
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, async () => ({
             tools: [
                 {
                     name: 'strict-tool',
@@ -1208,7 +1237,7 @@ describe('outputSchema validation', () => {
             ]
         }));
 
-        server.setRequestHandler(CallToolRequestSchema, async request => {
+        server.setRequestHandler('tools/call' satisfies CallToolRequest['method'], validateCallToolRequest, async request => {
             if (request.params.name === 'strict-tool') {
                 // Return structured content with extra property
                 return {

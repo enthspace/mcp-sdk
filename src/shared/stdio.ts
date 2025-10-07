@@ -1,4 +1,5 @@
-import { JSONRPCMessage, JSONRPCMessageSchema } from '../types.js';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import { validateJSONRPCMessage } from '@enth/mcp-specs/draft';
 
 /**
  * Buffers a continuous stdio stream into discrete JSON-RPC messages.
@@ -31,7 +32,13 @@ export class ReadBuffer {
 }
 
 export function deserializeMessage(line: string): JSONRPCMessage {
-    return JSONRPCMessageSchema.parse(JSON.parse(line));
+    const data = JSON.parse(line);
+    const validationResult = validateJSONRPCMessage(data);
+    if (!validationResult.valid) {
+        const error = new Error(`Invalid JSON-RPC message: ${validationResult.errorMessage}`);
+        throw error;
+    }
+    return data;
 }
 
 export function serializeMessage(message: JSONRPCMessage): string {

@@ -6,9 +6,11 @@ import { URL } from 'node:url';
 import { exec } from 'node:child_process';
 import { Client } from '../../client/index.js';
 import { StreamableHTTPClientTransport } from '../../client/streamableHttp.js';
-import { OAuthClientInformation, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from '../../shared/auth.js';
-import { CallToolRequest, ListToolsRequest, CallToolResultSchema, ListToolsResultSchema } from '../../types.js';
-import { OAuthClientProvider, UnauthorizedError } from '../../client/auth.js';
+import type { OAuthClientInformation, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from '../../shared/auth.js';
+import { validateCallToolResult, validateListToolsResult } from '@enth/mcp-specs/draft';
+import type { CallToolRequest, ListToolsRequest } from '@enth/mcp-specs/draft';
+import type { OAuthClientProvider } from '../../client/auth.js';
+import { UnauthorizedError } from '../../client/auth.js';
 
 // Configuration
 const DEFAULT_SERVER_URL = 'http://localhost:3000/mcp';
@@ -293,12 +295,12 @@ class InteractiveOAuthClient {
         }
 
         try {
-            const request: ListToolsRequest = {
+            const request: Omit<ListToolsRequest, 'jsonrpc' | 'id'> = {
                 method: 'tools/list',
                 params: {}
             };
 
-            const result = await this.client.request(request, ListToolsResultSchema);
+            const result = await this.client.request(request, validateListToolsResult);
 
             if (result.tools && result.tools.length > 0) {
                 console.log('\n📋 Available tools:');
@@ -348,7 +350,7 @@ class InteractiveOAuthClient {
         }
 
         try {
-            const request: CallToolRequest = {
+            const request: Omit<CallToolRequest, 'jsonrpc' | 'id'> = {
                 method: 'tools/call',
                 params: {
                     name: toolName,
@@ -356,7 +358,7 @@ class InteractiveOAuthClient {
                 }
             };
 
-            const result = await this.client.request(request, CallToolResultSchema);
+            const result = await this.client.request(request, validateCallToolResult);
 
             console.log(`\n🔧 Tool '${toolName}' result:`);
             if (result.content) {

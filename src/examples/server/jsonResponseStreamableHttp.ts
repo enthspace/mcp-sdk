@@ -1,9 +1,11 @@
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
+import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '../../server/mcp.js';
 import { StreamableHTTPServerTransport } from '../../server/streamableHttp.js';
 import { z } from 'zod';
-import { CallToolResult, isInitializeRequest } from '../../types.js';
+import type { CallToolResult } from '@enth/mcp-specs/draft';
+import { validateInitializeRequest } from '@enth/mcp-specs/draft';
 import cors from 'cors';
 
 // Create an MCP server with implementation details
@@ -24,9 +26,9 @@ const getServer = () => {
     server.tool(
         'greet',
         'A simple greeting tool',
-        {
+        z.object({
             name: z.string().describe('Name to greet')
-        },
+        }),
         async ({ name }): Promise<CallToolResult> => {
             return {
                 content: [
@@ -43,9 +45,9 @@ const getServer = () => {
     server.tool(
         'multi-greet',
         'A tool that sends different greetings with delays between them',
-        {
+        z.object({
             name: z.string().describe('Name to greet')
-        },
+        }),
         async ({ name }, extra): Promise<CallToolResult> => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -114,7 +116,7 @@ app.post('/mcp', async (req: Request, res: Response) => {
         if (sessionId && transports[sessionId]) {
             // Reuse existing transport
             transport = transports[sessionId];
-        } else if (!sessionId && isInitializeRequest(req.body)) {
+        } else if (!sessionId && validateInitializeRequest(req.body)) {
             // New initialization request - use JSON response mode
             transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),

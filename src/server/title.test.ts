@@ -1,14 +1,20 @@
+import { describe, it, expect } from 'vitest';
 import { Server } from './index.js';
 import { Client } from '../client/index.js';
 import { InMemoryTransport } from '../inMemory.js';
 import { z } from 'zod';
 import { McpServer, ResourceTemplate } from './mcp.js';
+import { isTextResourceContents } from '@enth/mcp-specs/draft';
+import { ZodToJsonSchemaPlugin } from '../zod/index.js';
 
 describe('Title field backwards compatibility', () => {
     it('should work with tools that have title', async () => {
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
-        const server = new McpServer({ name: 'test-server', version: '1.0.0' }, { capabilities: {} });
+        const server = new McpServer(
+            { name: 'test-server', version: '1.0.0' },
+            { capabilities: {}, toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()] }
+        );
 
         // Register tool with title
         server.registerTool(
@@ -16,9 +22,9 @@ describe('Title field backwards compatibility', () => {
             {
                 title: 'Test Tool Display Name',
                 description: 'A test tool',
-                inputSchema: {
+                inputSchema: z.object({
                     value: z.string()
-                }
+                })
             },
             async () => ({ content: [{ type: 'text', text: 'result' }] })
         );
@@ -38,10 +44,20 @@ describe('Title field backwards compatibility', () => {
     it('should work with tools without title', async () => {
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
-        const server = new McpServer({ name: 'test-server', version: '1.0.0' }, { capabilities: {} });
+        const server = new McpServer(
+            { name: 'test-server', version: '1.0.0' },
+            { capabilities: {}, toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()] }
+        );
 
         // Register tool without title
-        server.tool('test-tool', 'A test tool', { value: z.string() }, async () => ({ content: [{ type: 'text', text: 'result' }] }));
+        server.tool(
+            'test-tool',
+            'A test tool',
+            z.object({
+                value: z.string()
+            }),
+            async () => ({ content: [{ type: 'text', text: 'result' }] })
+        );
 
         const client = new Client({ name: 'test-client', version: '1.0.0' });
 
@@ -81,7 +97,10 @@ describe('Title field backwards compatibility', () => {
     it('should work with prompts using registerPrompt', async () => {
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
-        const server = new McpServer({ name: 'test-server', version: '1.0.0' }, { capabilities: {} });
+        const server = new McpServer(
+            { name: 'test-server', version: '1.0.0' },
+            { capabilities: {}, toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()] }
+        );
 
         // Register prompt with title using registerPrompt
         server.registerPrompt(
@@ -89,7 +108,9 @@ describe('Title field backwards compatibility', () => {
             {
                 title: 'Test Prompt Display Name',
                 description: 'A test prompt',
-                argsSchema: { input: z.string() }
+                argsSchema: z.object({
+                    input: z.string()
+                })
             },
             async ({ input }) => ({
                 messages: [
@@ -189,7 +210,7 @@ describe('Title field backwards compatibility', () => {
         // Test reading the resource
         const readResult = await client.readResource({ uri: 'users://123/profile' });
         expect(readResult.contents).toHaveLength(1);
-        expect(readResult.contents[0].text).toBe('Profile data for user 123');
+        expect(isTextResourceContents(readResult.contents[0]) && readResult.contents[0].text).toBe('Profile data for user 123');
     });
 
     it('should support serverInfo with title', async () => {

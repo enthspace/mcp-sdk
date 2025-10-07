@@ -1,17 +1,12 @@
-import {
-    LATEST_PROTOCOL_VERSION,
-    SUPPORTED_PROTOCOL_VERSIONS,
-    ResourceLinkSchema,
-    ContentBlockSchema,
-    PromptMessageSchema,
-    CallToolResultSchema,
-    CompleteRequestSchema
-} from './types.js';
+import { describe, test, expect } from 'vitest';
+import { SUPPORTED_PROTOCOL_VERSIONS } from './constants.js';
+import { LATEST_PROTOCOL_VERSION } from '@enth/mcp-specs/draft';
+import { ResourceLinkSchema, ContentBlockSchema, PromptMessageSchema, CallToolResultSchema, CompleteRequestSchema } from './zod/types.js';
 
 describe('Types', () => {
     test('should have correct latest protocol version', () => {
         expect(LATEST_PROTOCOL_VERSION).toBeDefined();
-        expect(LATEST_PROTOCOL_VERSION).toBe('2025-06-18');
+        expect(LATEST_PROTOCOL_VERSION).toBe('DRAFT-2025-v3');
     });
     test('should have correct supported protocol versions', () => {
         expect(SUPPORTED_PROTOCOL_VERSIONS).toBeDefined();
@@ -20,6 +15,7 @@ describe('Types', () => {
         expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2024-11-05');
         expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2024-10-07');
         expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2025-03-26');
+        expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2025-06-18');
     });
 
     describe('ResourceLink', () => {

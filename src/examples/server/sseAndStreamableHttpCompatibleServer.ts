@@ -1,12 +1,14 @@
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
+import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '../../server/mcp.js';
 import { StreamableHTTPServerTransport } from '../../server/streamableHttp.js';
 import { SSEServerTransport } from '../../server/sse.js';
 import { z } from 'zod';
-import { CallToolResult, isInitializeRequest } from '../../types.js';
 import { InMemoryEventStore } from '../shared/inMemoryEventStore.js';
 import cors from 'cors';
+import type { CallToolResult } from '@enth/mcp-specs/draft';
+import { isInitializeRequest } from '@enth/mcp-specs/draft';
 
 /**
  * This example server demonstrates backwards compatibility with both:
@@ -32,10 +34,10 @@ const getServer = () => {
     server.tool(
         'start-notification-stream',
         'Starts sending periodic notifications for testing resumability',
-        {
+        z.object({
             interval: z.number().describe('Interval in milliseconds between notifications').default(100),
             count: z.number().describe('Number of notifications to send (0 for 100)').default(50)
-        },
+        }),
         async ({ interval, count }, extra): Promise<CallToolResult> => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
             let counter = 0;

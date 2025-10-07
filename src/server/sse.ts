@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { Transport } from '../shared/transport.js';
-import { JSONRPCMessage, JSONRPCMessageSchema, MessageExtraInfo, RequestInfo } from '../types.js';
+import type { Transport } from '../shared/transport.js';
+import { validateJSONRPCMessage } from '@enth/mcp-specs/draft';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import type { MessageExtraInfo, RequestInfo } from '../types.js';
 import getRawBody from 'raw-body';
 import contentType from 'content-type';
-import { AuthInfo } from './auth/types.js';
+import type { AuthInfo } from './auth/types.js';
 import { URL } from 'url';
 
 const MAXIMUM_MESSAGE_SIZE = '4mb';
@@ -177,15 +179,12 @@ export class SSEServerTransport implements Transport {
      * Handle a client message, regardless of how it arrived. This can be used to inform the server of messages that arrive via a means different than HTTP POST.
      */
     async handleMessage(message: unknown, extra?: MessageExtraInfo): Promise<void> {
-        let parsedMessage: JSONRPCMessage;
-        try {
-            parsedMessage = JSONRPCMessageSchema.parse(message);
-        } catch (error) {
-            this.onerror?.(error as Error);
-            throw error;
+        const validatedMessage = validateJSONRPCMessage(message);
+        if (!validatedMessage.valid) {
+            throw new Error(`Invalid JSON-RPC message: ${validatedMessage.errorMessage}`);
         }
 
-        this.onmessage?.(parsedMessage, extra);
+        this.onmessage?.(validatedMessage.data, extra);
     }
 
     async close(): Promise<void> {

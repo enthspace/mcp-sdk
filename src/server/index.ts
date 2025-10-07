@@ -1,23 +1,17 @@
-import { mergeCapabilities, Protocol, ProtocolOptions, RequestOptions } from '../shared/protocol.js';
-import {
+import type { ProtocolOptions, RequestOptions } from '../shared/protocol.js';
+import { mergeCapabilities, Protocol } from '../shared/protocol.js';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../constants.js';
+import { McpError, ErrorCode } from '../errors.js';
+import type {
     ClientCapabilities,
     CreateMessageRequest,
-    CreateMessageResultSchema,
     ElicitRequest,
     ElicitResult,
-    ElicitResultSchema,
-    EmptyResultSchema,
     Implementation,
-    InitializedNotificationSchema,
     InitializeRequest,
-    InitializeRequestSchema,
     InitializeResult,
-    LATEST_PROTOCOL_VERSION,
     ListRootsRequest,
-    ListRootsResultSchema,
     LoggingMessageNotification,
-    McpError,
-    ErrorCode,
     Notification,
     Request,
     ResourceUpdatedNotification,
@@ -26,12 +20,23 @@ import {
     ServerNotification,
     ServerRequest,
     ServerResult,
-    SUPPORTED_PROTOCOL_VERSIONS,
     LoggingLevel,
-    SetLevelRequestSchema,
-    LoggingLevelSchema
-} from '../types.js';
-import Ajv from 'ajv';
+    SetLevelRequest,
+    InitializedNotification
+} from '@enth/mcp-specs/draft';
+import {
+    LATEST_PROTOCOL_VERSION,
+    LoggingLevelSchema,
+    validateInitializeRequest,
+    validateSetLevelRequest,
+    validateInitializedNotification,
+    validateCreateMessageResult,
+    validateElicitResult,
+    validateListRootsResult,
+    validateEmptyResult,
+    isLoggingLevel
+} from '@enth/mcp-specs/draft';
+import type { JsonSchemaType } from '@enth/mcp-specs';
 
 export type ServerOptions = ProtocolOptions & {
     /**
@@ -74,7 +79,11 @@ export class Server<
     RequestT extends Request = Request,
     NotificationT extends Notification = Notification,
     ResultT extends Result = Result
-> extends Protocol<ServerRequest | RequestT, ServerNotification | NotificationT, ServerResult | ResultT> {
+> extends Protocol<
+    Omit<ServerRequest, 'jsonrpc' | 'id'> | RequestT,
+    Omit<ServerNotification, 'jsonrpc'> | NotificationT,
+    ServerResult | ResultT
+> {
     private _clientCapabilities?: ClientCapabilities;
     private _clientVersion?: Implementation;
     private _capabilities: ServerCapabilities;
@@ -96,20 +105,29 @@ export class Server<
         this._capabilities = options?.capabilities ?? {};
         this._instructions = options?.instructions;
 
-        this.setRequestHandler(InitializeRequestSchema, request => this._oninitialize(request));
-        this.setNotificationHandler(InitializedNotificationSchema, () => this.oninitialized?.());
+        this.setRequestHandler('initialize' satisfies InitializeRequest['method'], validateInitializeRequest, request =>
+            this._oninitialize(request)
+        );
+        this.setNotificationHandler(
+            'notifications/initialized' satisfies InitializedNotification['method'],
+            validateInitializedNotification,
+            () => this.oninitialized?.()
+        );
 
         if (this._capabilities.logging) {
-            this.setRequestHandler(SetLevelRequestSchema, async (request, extra) => {
-                const transportSessionId: string | undefined =
-                    extra.sessionId || (extra.requestInfo?.headers['mcp-session-id'] as string) || undefined;
-                const { level } = request.params;
-                const parseResult = LoggingLevelSchema.safeParse(level);
-                if (parseResult.success) {
-                    this._loggingLevels.set(transportSessionId, parseResult.data);
+            this.setRequestHandler(
+                'logging/setLevel' satisfies SetLevelRequest['method'],
+                validateSetLevelRequest,
+                async (request, extra) => {
+                    const transportSessionId: string | undefined =
+                        extra.sessionId || (extra.requestInfo?.headers['mcp-session-id'] as string) || undefined;
+                    const { level } = request.params;
+                    if (isLoggingLevel(level)) {
+                        this._loggingLevels.set(transportSessionId, level);
+                    }
+                    return {};
                 }
-                return {};
-            });
+            );
         }
     }
 
@@ -117,7 +135,7 @@ export class Server<
     private _loggingLevels = new Map<string | undefined, LoggingLevel>();
 
     // Map LogLevelSchema to severity index
-    private readonly LOG_LEVEL_SEVERITY = new Map(LoggingLevelSchema.options.map((level, index) => [level, index]));
+    private readonly LOG_LEVEL_SEVERITY = new Map(LoggingLevelSchema.enum.map((level, index) => [level, index]));
 
     // Is a message with the given level ignored in the log level set for the given session id?
     private isMessageIgnored = (level: LoggingLevel, sessionId?: string): boolean => {
@@ -163,7 +181,7 @@ export class Server<
         }
     }
 
-    protected assertNotificationCapability(method: (ServerNotification | NotificationT)['method']): void {
+    protected assertNotificationCapability(method: (Omit<ServerNotification, 'jsonrpc'> | NotificationT)['method']): void {
         switch (method as ServerNotification['method']) {
             case 'notifications/message':
                 if (!this._capabilities.logging) {
@@ -203,6 +221,7 @@ export class Server<
     protected assertRequestHandlerCapability(method: string): void {
         switch (method) {
             case 'sampling/createMessage':
+                // @ts-expect-error The server isn't supposed to know about client capabilities
                 if (!this._capabilities.sampling) {
                     throw new Error(`Server does not support sampling (required for ${method})`);
                 }
@@ -278,28 +297,26 @@ export class Server<
     }
 
     async ping() {
-        return this.request({ method: 'ping' }, EmptyResultSchema);
+        return this.request({ method: 'ping' }, validateEmptyResult);
     }
 
     async createMessage(params: CreateMessageRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'sampling/createMessage', params }, CreateMessageResultSchema, options);
+        return this.request({ method: 'sampling/createMessage', params }, validateCreateMessageResult, options);
     }
 
     async elicitInput(params: ElicitRequest['params'], options?: RequestOptions): Promise<ElicitResult> {
-        const result = await this.request({ method: 'elicitation/create', params }, ElicitResultSchema, options);
+        const result = await this.request({ method: 'elicitation/create', params }, validateElicitResult, options);
 
         // Validate the response content against the requested schema if action is "accept"
         if (result.action === 'accept' && result.content) {
             try {
-                const ajv = new Ajv();
+                const validator = await this.createValidator(params.requestedSchema as JsonSchemaType<object>);
+                const validatedContent = validator(result.content);
 
-                const validate = ajv.compile(params.requestedSchema);
-                const isValid = validate(result.content);
-
-                if (!isValid) {
+                if (!validatedContent.valid) {
                     throw new McpError(
                         ErrorCode.InvalidParams,
-                        `Elicitation response content does not match requested schema: ${ajv.errorsText(validate.errors)}`
+                        `Elicitation response content does not match requested schema: ${validatedContent.errorMessage}`
                     );
                 }
             } catch (error) {
@@ -314,7 +331,7 @@ export class Server<
     }
 
     async listRoots(params?: ListRootsRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'roots/list', params }, ListRootsResultSchema, options);
+        return this.request({ method: 'roots/list', params }, validateListRootsResult, options);
     }
 
     /**

@@ -1,12 +1,7 @@
 import { Client } from '../../client/index.js';
 import { StreamableHTTPClientTransport } from '../../client/streamableHttp.js';
-import {
-    ListToolsRequest,
-    ListToolsResultSchema,
-    CallToolResultSchema,
-    LoggingMessageNotificationSchema,
-    CallToolResult
-} from '../../types.js';
+import { validateCallToolResult, validateListToolsResult, validateLoggingMessageNotification } from '@enth/mcp-specs/draft';
+import type { ListToolsRequest, CallToolResult, LoggingMessageNotification } from '@enth/mcp-specs/draft';
 
 /**
  * Parallel Tool Calls MCP Client
@@ -45,9 +40,13 @@ async function main(): Promise<void> {
         console.log('Successfully connected to MCP server');
 
         // Set up notification handler with caller identification
-        client.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
-            console.log(`Notification: ${notification.params.data}`);
-        });
+        await client.setNotificationHandler(
+            'notifications/message' satisfies LoggingMessageNotification['method'],
+            validateLoggingMessageNotification,
+            notification => {
+                console.log(`Notification: ${notification.params.data}`);
+            }
+        );
 
         console.log('List tools');
         const toolsRequest = await listTools(client);
@@ -88,11 +87,11 @@ async function main(): Promise<void> {
  */
 async function listTools(client: Client): Promise<void> {
     try {
-        const toolsRequest: ListToolsRequest = {
+        const toolsRequest: Omit<ListToolsRequest, 'jsonrpc' | 'id'> = {
             method: 'tools/list',
             params: {}
         };
-        const toolsResult = await client.request(toolsRequest, ListToolsResultSchema);
+        const toolsResult = await client.request(toolsRequest, validateListToolsResult);
 
         console.log('Available tools:');
         if (toolsResult.tools.length === 0) {
@@ -165,7 +164,7 @@ async function startParallelNotificationTools(client: Client): Promise<Record<st
         const toolPromises = toolCalls.map(({ caller, request }) => {
             console.log(`Starting tool call for ${caller}...`);
             return client
-                .request(request, CallToolResultSchema)
+                .request(request, validateCallToolResult)
                 .then(result => ({ caller, result }))
                 .catch(error => {
                     console.error(`Error in tool call for ${caller}:`, error);

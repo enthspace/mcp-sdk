@@ -1,9 +1,11 @@
-import { OAuthServerProvider } from '../provider.js';
-import express, { RequestHandler } from 'express';
+import type { OAuthServerProvider } from '../provider.js';
+import type { RequestHandler } from 'express';
+import express from 'express';
 import cors from 'cors';
 import { authenticateClient } from '../middleware/clientAuth.js';
 import { OAuthTokenRevocationRequestSchema } from '../../../shared/auth.js';
-import { rateLimit, Options as RateLimitOptions } from 'express-rate-limit';
+import type { Options as RateLimitOptions } from 'express-rate-limit';
+import { rateLimit } from 'express-rate-limit';
 import { allowedMethods } from '../middleware/allowedMethods.js';
 import { InvalidRequestError, ServerError, TooManyRequestsError, OAuthError } from '../errors.js';
 

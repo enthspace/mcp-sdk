@@ -1,13 +1,8 @@
 import { Client } from '../../client/index.js';
 import { StreamableHTTPClientTransport } from '../../client/streamableHttp.js';
 import { SSEClientTransport } from '../../client/sse.js';
-import {
-    ListToolsRequest,
-    ListToolsResultSchema,
-    CallToolRequest,
-    CallToolResultSchema,
-    LoggingMessageNotificationSchema
-} from '../../types.js';
+import { validateListToolsResult, validateCallToolResult, validateLoggingMessageNotification } from '@enth/mcp-specs/draft';
+import type { ListToolsRequest, CallToolRequest, LoggingMessageNotification } from '@enth/mcp-specs/draft';
 
 /**
  * Simplified Backwards Compatible MCP Client
@@ -40,9 +35,13 @@ async function main(): Promise<void> {
         transport = connection.transport;
 
         // Set up notification handler
-        client.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
-            console.log(`Notification: ${notification.params.level} - ${notification.params.data}`);
-        });
+        client.setNotificationHandler(
+            'notifications/message' satisfies LoggingMessageNotification['method'],
+            validateLoggingMessageNotification,
+            notification => {
+                console.log(`Notification: ${notification.params.level} - ${notification.params.data}`);
+            }
+        );
 
         // DEMO WORKFLOW:
         // 1. List available tools
@@ -132,11 +131,11 @@ async function connectWithBackwardsCompatibility(url: string): Promise<{
  */
 async function listTools(client: Client): Promise<void> {
     try {
-        const toolsRequest: ListToolsRequest = {
+        const toolsRequest: Omit<ListToolsRequest, 'jsonrpc' | 'id'> = {
             method: 'tools/list',
             params: {}
         };
-        const toolsResult = await client.request(toolsRequest, ListToolsResultSchema);
+        const toolsResult = await client.request(toolsRequest, validateListToolsResult);
 
         console.log('Available tools:');
         if (toolsResult.tools.length === 0) {
@@ -157,7 +156,7 @@ async function listTools(client: Client): Promise<void> {
 async function startNotificationTool(client: Client): Promise<void> {
     try {
         // Call the notification tool using reasonable defaults
-        const request: CallToolRequest = {
+        const request: Omit<CallToolRequest, 'jsonrpc' | 'id'> = {
             method: 'tools/call',
             params: {
                 name: 'start-notification-stream',
@@ -169,7 +168,7 @@ async function startNotificationTool(client: Client): Promise<void> {
         };
 
         console.log('Calling notification tool...');
-        const result = await client.request(request, CallToolResultSchema);
+        const result = await client.request(request, validateCallToolResult);
 
         console.log('Tool result:');
         result.content.forEach(item => {

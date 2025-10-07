@@ -1,8 +1,9 @@
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
+import express from 'express';
 import { McpServer } from '../../server/mcp.js';
 import { StreamableHTTPServerTransport } from '../../server/streamableHttp.js';
 import { z } from 'zod';
-import { CallToolResult, GetPromptResult, ReadResourceResult } from '../../types.js';
+import type { CallToolResult, GetPromptResult, ReadResourceResult } from '@enth/mcp-specs/draft';
 import cors from 'cors';
 
 const getServer = () => {
@@ -19,9 +20,9 @@ const getServer = () => {
     server.prompt(
         'greeting-template',
         'A simple greeting prompt template',
-        {
+        z.object({
             name: z.string().describe('Name to include in greeting')
-        },
+        }),
         async ({ name }): Promise<GetPromptResult> => {
             return {
                 messages: [
@@ -41,10 +42,10 @@ const getServer = () => {
     server.tool(
         'start-notification-stream',
         'Starts sending periodic notifications for testing resumability',
-        {
+        z.object({
             interval: z.number().describe('Interval in milliseconds between notifications').default(100),
             count: z.number().describe('Number of notifications to send (0 for 100)').default(10)
-        },
+        }),
         async ({ interval, count }, extra): Promise<CallToolResult> => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
             let counter = 0;

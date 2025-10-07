@@ -1,4 +1,5 @@
-import { JSONRPCMessage, MessageExtraInfo, RequestId } from '../types.js';
+import type { JSONRPCMessage, RequestId } from '@enth/mcp-specs/draft';
+import type { MessageExtraInfo } from '../types.js';
 
 export type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -43,7 +44,7 @@ export interface Transport {
      *
      * If present, `relatedRequestId` is used to indicate to the transport which incoming request to associate this outgoing message with.
      */
-    send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void>;
+    send<TMessage extends JSONRPCMessage>(message: TMessage, options?: TransportSendOptions): Promise<void>;
 
     /**
      * Closes the connection.

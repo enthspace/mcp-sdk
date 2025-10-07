@@ -1,5 +1,7 @@
-import { JSONRPCMessage } from '../types.js';
-import { StdioClientTransport, StdioServerParameters } from './stdio.js';
+import { test, expect } from 'vitest';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import type { StdioServerParameters } from './stdio.js';
+import { StdioClientTransport } from './stdio.js';
 
 // Configure default server parameters based on OS
 // Uses 'more' command for Windows and 'tee' command for Unix/Linux

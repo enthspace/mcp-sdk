@@ -1,6 +1,7 @@
+import type { CallToolRequest, CallToolResult, LoggingMessageNotification } from '@enth/mcp-specs/draft';
+import { validateLoggingMessageNotification, validateCallToolResult } from '@enth/mcp-specs/draft';
 import { Client } from '../../client/index.js';
 import { StreamableHTTPClientTransport } from '../../client/streamableHttp.js';
-import { CallToolRequest, CallToolResultSchema, LoggingMessageNotificationSchema, CallToolResult } from '../../types.js';
 
 /**
  * Multiple Clients MCP Example
@@ -38,9 +39,13 @@ async function createAndRunClient(config: ClientConfig): Promise<{ id: string; r
     };
 
     // Set up client-specific notification handler
-    client.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
-        console.log(`[${config.id}] Notification: ${notification.params.data}`);
-    });
+    await client.setNotificationHandler(
+        'notifications/message' satisfies LoggingMessageNotification['method'],
+        validateLoggingMessageNotification,
+        notification => {
+            console.log(`[${config.id}] Notification: ${notification.params.data}`);
+        }
+    );
 
     try {
         // Connect to the server
@@ -49,7 +54,7 @@ async function createAndRunClient(config: ClientConfig): Promise<{ id: string; r
 
         // Call the specified tool
         console.log(`[${config.id}] Calling tool: ${config.toolName}`);
-        const toolRequest: CallToolRequest = {
+        const toolRequest: Omit<CallToolRequest, 'jsonrpc' | 'id'> = {
             method: 'tools/call',
             params: {
                 name: config.toolName,
@@ -61,7 +66,7 @@ async function createAndRunClient(config: ClientConfig): Promise<{ id: string; r
             }
         };
 
-        const result = await client.request(toolRequest, CallToolResultSchema);
+        const result = await client.request(toolRequest, validateCallToolResult);
         console.log(`[${config.id}] Tool call completed`);
 
         // Keep the connection open for a bit to receive notifications

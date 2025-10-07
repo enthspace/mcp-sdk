@@ -1,9 +1,12 @@
-import express, { RequestHandler } from 'express';
-import { OAuthClientInformationFull, OAuthClientMetadataSchema } from '../../../shared/auth.js';
+import type { RequestHandler } from 'express';
+import express from 'express';
+import type { OAuthClientInformationFull } from '../../../shared/auth.js';
+import { OAuthClientMetadataSchema } from '../../../shared/auth.js';
 import crypto from 'node:crypto';
 import cors from 'cors';
-import { OAuthRegisteredClientsStore } from '../clients.js';
-import { rateLimit, Options as RateLimitOptions } from 'express-rate-limit';
+import type { OAuthRegisteredClientsStore } from '../clients.js';
+import type { Options as RateLimitOptions } from 'express-rate-limit';
+import { rateLimit } from 'express-rate-limit';
 import { allowedMethods } from '../middleware/allowedMethods.js';
 import { InvalidClientMetadataError, ServerError, TooManyRequestsError, OAuthError } from '../errors.js';
 

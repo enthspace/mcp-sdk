@@ -1,8 +1,9 @@
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
+import express from 'express';
 import { McpServer } from '../../server/mcp.js';
 import { SSEServerTransport } from '../../server/sse.js';
 import { z } from 'zod';
-import { CallToolResult } from '../../types.js';
+import type { CallToolResult } from '@enth/mcp-specs/draft';
 
 /**
  * This example server demonstrates the deprecated HTTP+SSE transport
@@ -27,10 +28,10 @@ const getServer = () => {
     server.tool(
         'start-notification-stream',
         'Starts sending periodic notifications',
-        {
+        z.object({
             interval: z.number().describe('Interval in milliseconds between notifications').default(1000),
             count: z.number().describe('Number of notifications to send').default(10)
-        },
+        }),
         async ({ interval, count }, extra): Promise<CallToolResult> => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
             let counter = 0;

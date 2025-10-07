@@ -1,7 +1,9 @@
 import { EventSource, type ErrorEvent, type EventSourceInit } from 'eventsource';
-import { Transport, FetchLike } from '../shared/transport.js';
-import { JSONRPCMessage, JSONRPCMessageSchema } from '../types.js';
-import { auth, AuthResult, extractResourceMetadataUrl, OAuthClientProvider, UnauthorizedError } from './auth.js';
+import type { Transport, FetchLike } from '../shared/transport.js';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import { validateJSONRPCMessage } from '@enth/mcp-specs/draft';
+import type { AuthResult, OAuthClientProvider } from './auth.js';
+import { auth, extractResourceMetadataUrl, UnauthorizedError } from './auth.js';
 
 export class SseError extends Error {
     constructor(
@@ -180,15 +182,15 @@ export class SSEClientTransport implements Transport {
 
             this._eventSource.onmessage = (event: Event) => {
                 const messageEvent = event as MessageEvent;
-                let message: JSONRPCMessage;
-                try {
-                    message = JSONRPCMessageSchema.parse(JSON.parse(messageEvent.data));
-                } catch (error) {
-                    this.onerror?.(error as Error);
+                const message: JSONRPCMessage | unknown = JSON.parse(messageEvent.data);
+                const validatedMessage = validateJSONRPCMessage(message);
+                if (!validatedMessage.valid) {
+                    const error = new Error(`Invalid JSON-RPC message: ${validatedMessage.errorMessage}`);
+                    this.onerror?.(error);
                     return;
                 }
 
-                this.onmessage?.(message);
+                this.onmessage?.(validatedMessage.data);
             };
         });
     }

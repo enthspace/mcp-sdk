@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { AuthorizationParams, OAuthServerProvider } from '../../server/auth/provider.js';
-import { OAuthRegisteredClientsStore } from '../../server/auth/clients.js';
-import { OAuthClientInformationFull, OAuthMetadata, OAuthTokens } from '../../shared/auth.js';
-import express, { Request, Response } from 'express';
-import { AuthInfo } from '../../server/auth/types.js';
+import type { AuthorizationParams, OAuthServerProvider } from '../../server/auth/provider.js';
+import type { OAuthRegisteredClientsStore } from '../../server/auth/clients.js';
+import type { OAuthClientInformationFull, OAuthMetadata, OAuthTokens } from '../../shared/auth.js';
+import type { Request, Response } from 'express';
+import express from 'express';
+import type { AuthInfo } from '../../server/auth/types.js';
 import { createOAuthMetadata, mcpAuthRouter } from '../../server/auth/router.js';
 import { resourceUrlFromServerUrl } from '../../shared/auth-utils.js';
 import { InvalidRequestError } from '../../server/auth/errors.js';

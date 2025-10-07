@@ -1,45 +1,46 @@
-import { mergeCapabilities, Protocol, ProtocolOptions, RequestOptions } from '../shared/protocol.js';
-import { Transport } from '../shared/transport.js';
-import {
+import type { ProtocolOptions, RequestOptions } from '../shared/protocol.js';
+import { mergeCapabilities, Protocol } from '../shared/protocol.js';
+import type { Transport } from '../shared/transport.js';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../constants.js';
+import type { JsonSchemaType, JsonSchemaValidator } from '@enth/mcp-specs';
+import type {
     CallToolRequest,
-    CallToolResultSchema,
+    CallToolResult,
     ClientCapabilities,
     ClientNotification,
     ClientRequest,
     ClientResult,
-    CompatibilityCallToolResultSchema,
     CompleteRequest,
-    CompleteResultSchema,
-    EmptyResultSchema,
     GetPromptRequest,
-    GetPromptResultSchema,
     Implementation,
-    InitializeResultSchema,
-    LATEST_PROTOCOL_VERSION,
     ListPromptsRequest,
-    ListPromptsResultSchema,
     ListResourcesRequest,
-    ListResourcesResultSchema,
     ListResourceTemplatesRequest,
-    ListResourceTemplatesResultSchema,
     ListToolsRequest,
-    ListToolsResultSchema,
     LoggingLevel,
     Notification,
     ReadResourceRequest,
-    ReadResourceResultSchema,
     Request,
     Result,
     ServerCapabilities,
     SubscribeRequest,
-    SUPPORTED_PROTOCOL_VERSIONS,
     UnsubscribeRequest,
-    Tool,
-    ErrorCode,
-    McpError
-} from '../types.js';
-import Ajv from 'ajv';
-import type { ValidateFunction } from 'ajv';
+    Tool
+} from '@enth/mcp-specs/draft';
+import { ErrorCode, McpError } from '../errors.js';
+import {
+    LATEST_PROTOCOL_VERSION,
+    validateCompleteResult,
+    validateEmptyResult,
+    validateGetPromptResult,
+    validateInitializeResult,
+    validateListPromptsResult,
+    validateListResourcesResult,
+    validateListResourceTemplatesResult,
+    validateReadResourceResult,
+    validateCallToolResult,
+    validateListToolsResult
+} from '@enth/mcp-specs/draft';
 
 export type ClientOptions = ProtocolOptions & {
     /**
@@ -77,24 +78,25 @@ export class Client<
     RequestT extends Request = Request,
     NotificationT extends Notification = Notification,
     ResultT extends Result = Result
-> extends Protocol<ClientRequest | RequestT, ClientNotification | NotificationT, ClientResult | ResultT> {
+> extends Protocol<
+    Omit<ClientRequest, 'jsonrpc' | 'id'> | RequestT,
+    Omit<ClientNotification, 'jsonrpc'> | NotificationT,
+    ClientResult | ResultT
+> {
     private _serverCapabilities?: ServerCapabilities;
     private _serverVersion?: Implementation;
     private _capabilities: ClientCapabilities;
     private _instructions?: string;
-    private _cachedToolOutputValidators: Map<string, ValidateFunction> = new Map();
-    private _ajv: InstanceType<typeof Ajv>;
+    private _cachedToolOutputValidators: Map<string, JsonSchemaValidator<unknown>> = new Map();
+    private _clientInfo: Implementation;
 
     /**
      * Initializes this client with the given name and version information.
      */
-    constructor(
-        private _clientInfo: Implementation,
-        options?: ClientOptions
-    ) {
+    constructor(clientInfo: Implementation, options?: ClientOptions) {
         super(options);
+        this._clientInfo = clientInfo;
         this._capabilities = options?.capabilities ?? {};
-        this._ajv = new Ajv();
     }
 
     /**
@@ -133,7 +135,7 @@ export class Client<
                         clientInfo: this._clientInfo
                     }
                 },
-                InitializeResultSchema,
+                validateInitializeResult,
                 options
             );
 
@@ -287,51 +289,51 @@ export class Client<
     }
 
     async ping(options?: RequestOptions) {
-        return this.request({ method: 'ping' }, EmptyResultSchema, options);
+        return this.request({ method: 'ping' }, validateEmptyResult, options);
     }
 
     async complete(params: CompleteRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'completion/complete', params }, CompleteResultSchema, options);
+        return this.request({ method: 'completion/complete', params }, validateCompleteResult, options);
     }
 
     async setLoggingLevel(level: LoggingLevel, options?: RequestOptions) {
-        return this.request({ method: 'logging/setLevel', params: { level } }, EmptyResultSchema, options);
+        return this.request({ method: 'logging/setLevel', params: { level } }, validateEmptyResult, options);
     }
 
     async getPrompt(params: GetPromptRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'prompts/get', params }, GetPromptResultSchema, options);
+        return this.request({ method: 'prompts/get', params }, validateGetPromptResult, options);
     }
 
     async listPrompts(params?: ListPromptsRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'prompts/list', params }, ListPromptsResultSchema, options);
+        return this.request({ method: 'prompts/list', params }, validateListPromptsResult, options);
     }
 
     async listResources(params?: ListResourcesRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'resources/list', params }, ListResourcesResultSchema, options);
+        return this.request({ method: 'resources/list', params }, validateListResourcesResult, options);
     }
 
     async listResourceTemplates(params?: ListResourceTemplatesRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'resources/templates/list', params }, ListResourceTemplatesResultSchema, options);
+        return this.request({ method: 'resources/templates/list', params }, validateListResourceTemplatesResult, options);
     }
 
     async readResource(params: ReadResourceRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'resources/read', params }, ReadResourceResultSchema, options);
+        return this.request({ method: 'resources/read', params }, validateReadResourceResult, options);
     }
 
     async subscribeResource(params: SubscribeRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'resources/subscribe', params }, EmptyResultSchema, options);
+        return this.request({ method: 'resources/subscribe', params }, validateEmptyResult, options);
     }
 
     async unsubscribeResource(params: UnsubscribeRequest['params'], options?: RequestOptions) {
-        return this.request({ method: 'resources/unsubscribe', params }, EmptyResultSchema, options);
+        return this.request({ method: 'resources/unsubscribe', params }, validateEmptyResult, options);
     }
 
     async callTool(
         params: CallToolRequest['params'],
-        resultSchema: typeof CallToolResultSchema | typeof CompatibilityCallToolResultSchema = CallToolResultSchema,
+        resultSchemaOrValidator: JsonSchemaValidator<CallToolResult> = validateCallToolResult,
         options?: RequestOptions
     ) {
-        const result = await this.request({ method: 'tools/call', params }, resultSchema, options);
+        const result = await this.request<CallToolResult>({ method: 'tools/call', params }, resultSchemaOrValidator, options);
 
         // Check if the tool has an outputSchema
         const validator = this.getToolOutputValidator(params.name);
@@ -348,12 +350,12 @@ export class Client<
             if (result.structuredContent) {
                 try {
                     // Validate the structured content (which is already an object) against the schema
-                    const isValid = validator(result.structuredContent);
+                    const validatedContent = validator(result.structuredContent);
 
-                    if (!isValid) {
+                    if (!validatedContent.valid) {
                         throw new McpError(
                             ErrorCode.InvalidParams,
-                            `Structured content does not match the tool's output schema: ${this._ajv.errorsText(validator.errors)}`
+                            `Structured content does not match the tool's output schema: ${validatedContent.errorMessage} for tool ${params.name} with structured content ${JSON.stringify(result.structuredContent)}`
                         );
                     }
                 } catch (error) {
@@ -371,14 +373,14 @@ export class Client<
         return result;
     }
 
-    private cacheToolOutputSchemas(tools: Tool[]) {
+    private async cacheToolOutputSchemas(tools: Tool[]) {
         this._cachedToolOutputValidators.clear();
 
         for (const tool of tools) {
-            // If the tool has an outputSchema, create and cache the Ajv validator
+            // If the tool has an outputSchema, create and cache the validator
             if (tool.outputSchema) {
                 try {
-                    const validator = this._ajv.compile(tool.outputSchema);
+                    const validator = await this.createValidator(tool.outputSchema as JsonSchemaType<object>);
                     this._cachedToolOutputValidators.set(tool.name, validator);
                 } catch {
                     // Ignore schema compilation errors
@@ -387,15 +389,15 @@ export class Client<
         }
     }
 
-    private getToolOutputValidator(toolName: string): ValidateFunction | undefined {
+    private getToolOutputValidator(toolName: string): JsonSchemaValidator<unknown> | undefined {
         return this._cachedToolOutputValidators.get(toolName);
     }
 
     async listTools(params?: ListToolsRequest['params'], options?: RequestOptions) {
-        const result = await this.request({ method: 'tools/list', params }, ListToolsResultSchema, options);
+        const result = await this.request({ method: 'tools/list', params }, validateListToolsResult, options);
 
         // Cache the tools and their output schemas for future validation
-        this.cacheToolOutputSchemas(result.tools);
+        await this.cacheToolOutputSchemas(result.tools);
 
         return result;
     }

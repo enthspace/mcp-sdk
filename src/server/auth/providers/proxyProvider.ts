@@ -1,16 +1,11 @@
-import { Response } from 'express';
-import { OAuthRegisteredClientsStore } from '../clients.js';
-import {
-    OAuthClientInformationFull,
-    OAuthClientInformationFullSchema,
-    OAuthTokenRevocationRequest,
-    OAuthTokens,
-    OAuthTokensSchema
-} from '../../../shared/auth.js';
-import { AuthInfo } from '../types.js';
-import { AuthorizationParams, OAuthServerProvider } from '../provider.js';
+import type { Response } from 'express';
+import type { OAuthRegisteredClientsStore } from '../clients.js';
+import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from '../../../shared/auth.js';
+import { OAuthClientInformationFullSchema, OAuthTokensSchema } from '../../../shared/auth.js';
+import type { AuthInfo } from '../types.js';
+import type { AuthorizationParams, OAuthServerProvider } from '../provider.js';
 import { ServerError } from '../errors.js';
-import { FetchLike } from '../../../shared/transport.js';
+import type { FetchLike } from '../../../shared/transport.js';
 
 export type ProxyEndpoints = {
     authorizationUrl: string;

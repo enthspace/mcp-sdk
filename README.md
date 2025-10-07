@@ -1,4 +1,151 @@
-# MCP TypeScript SDK ![NPM Version](https://img.shields.io/npm/v/%40modelcontextprotocol%2Fsdk) ![MIT licensed](https://img.shields.io/npm/l/%40modelcontextprotocol%2Fsdk)
+# MCP TypeScript SDK ![NPM Version](https://img.shields.io/npm/v/%40enth%2Fmcp-sdk) ![MIT licensed](https://img.shields.io/npm/l/%40enth%2Fmcp-sdk)
+
+> [!IMPORTANT]
+>
+> This is a fork of the [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) NPM package with the following changes.
+
+## Fewer dependencies
+
+The core library no longer requires [Zod](https://github.com/colinhacks/zod), [zod-to-json-schema](https://github.com/StefanTerdell/zod-to-json-schema), or [Ajv](https://github.com/ajv-validator/ajv) to run. All built in schemas and validation are handled by static JSON Schema
+objects and validation functions (which are available standalone in [@enth/mcp-specs](https://github.com/enthspace/mcp-specs)). This results in a smaller and faster core library with more flexibility.
+
+> [!WARNING]
+>
+> The Auth setup still uses Zod for now as that code needs a bigger refactor and is important to get right. Next steps for this library are to remove `express` as a hard dependency and refactor the auth code to play nicer with more popular auth setups and back end libraries.
+
+## Smaller Size - less than $\frac{1}{4}$ the size
+
+The core library is much smaller, even including pre-compiled validators. For example, just importing `Client`, `Server`, or `McpServer` used to be over **50 kB** and is now **9 kB - 12 kB**. And size is now monitored using `size-limit` to ensure that number stays low and ideally gets lower.
+
+> ![NOTE]
+>
+> This could be made even smaller (about half the size) by not bundling the pre-compiled validators but that would require the core library to generate all needed validators and result in slower performance in some environments.
+
+## Faster Performance
+
+The core library no longer needs to convert Zod schemas to JSON Schema and then generate a validator using Ajv for basic functionality. Previously, many validators were not even cached, so this would happen for every validation done in the library, resulting in validation running
+over **100x** slower.
+
+Additionally, API calls that require validators (`sendRequest`, `setRequestHandler`, `setNotificationHandler`) can now take a validator function rather than requiring a Schema object and generating the validator internally. So you can pre-compile your validators as well, meaing faster validation in any runtime environment.
+
+## BYOSL (Bring Your Own Schema Library)
+
+The library still supports defining your schemas with Zod if you want. But also Typebox, Valibot, and any other [Standard Schema](https://github.com/standard-schema/standard-schema) libraries that support serialization to JSON Schema.
+
+The difference is that now instead of using Zod `RawShape` for schemas, it requires ZodObjects. So
+
+```ts
+inputSchema: {
+    foo: z.string(),
+    bar: z.number(),
+}
+```
+
+now needs to be:
+
+```ts
+inputSchema: z.object({
+    foo: z.string(),
+    bar: z.number()
+});
+```
+
+Also, because we removed the requirement of Zod from the core library, you now need to tell your `Server`/`Client`/`Protocol` how to handle the Zod (or other) schemas by setting the `toJsonSchemaPlugins` in the `ClientOptions`/`ServerOptions`/`ProtocolOptions`.
+
+> [!TIP]
+>
+> We recommend using Typebox for schema definitions as it is built on top of JSON Schema. This means it does not require a `toJsonSchemaPlugins` (the core library handles it just like any JSON Schema) and more importantly, it does not have unsupported schema types that will fail
+> at runtime.
+>
+> You can also use Typebox for validation, though it is slower than Ajv by a factor of **1.5x** (for valid objects) to **100x** (for invalid objects validated against large schemas as it has no `shortcircuit` option).
+
+### Available options in this library
+
+- [**Zod**](https://github.com/colinhacks/zod) - `ZodToJsonSchemaPlugin`
+- [**Valibot**](https://github.com/fabian-hiller/valibot) - `ValibotToJsonSchemaPlugin`
+- [**Typebox**](https://github.com/sinclairzx81/typebox) - No plugin required as it utilizes JSON Schema internally
+
+You can see the implementation of those to see how to implement your own custom plugins for other schema libraries.
+
+> [!NOTE]
+>
+> JSON Schema objects are supported by default regardless of the plugins provided.
+>
+> And you can add as many plugins as you like, though it is best to stick to one or none. We have included the option to support multiple for instances where you are working with multiple code bases or for when migrating validator libraries.
+
+## BYOJSV (Bring Your Own JSON Schema Validators)
+
+The core library does all its validation using pre-compiled JSON Schema validators (from `@enth/mcp-specs`). And you can too. Or you can choose to keep using Ajv. Or switch to Typebox or `@cfworker/json-schema`.
+
+Similar to above, you just need to configure the `jsonSchemaValidatorProvider` in `ClientOptions`/`ServerOptions`/`ProtocolOptions`.
+
+### Available options in this library
+
+- **Ajv** - `AjvJsonSchemaValidatorProvider` (this is the fastest option but does not run in all environments as it requires use of `eval` and/or `new Function` which many edge providers do not support)
+- **CfWorker** - `CfWorkerJsonSchemaValidatorProvider` (popular alternative for Cloudflare workers and other restricted runtimes)
+- **Typebox** = `TypeboxJsonSchemaValidatorProvider` (Good option when using Typebox for Schema Definitions)
+
+You can see the implementation of those to see how to implement your own custom ones.
+
+> [!TIP]
+>
+> It is possible to use different JSON Schema Validator Providers for your Client and Server/McpServers.
+
+## Example Client using Zod and Ajv
+
+```ts
+import { ZodToJsonSchemaPlugin } from '@enth/mcp-sdk/zod';
+import { AjvJsonSchemaValidatorProvider } from '@enth/mcp-sdk/ajv';
+
+const client = new Client(
+    {
+        name: 'test server',
+        version: '1.0'
+    },
+    {
+        capabilities: {},
+        toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()], // <-- Adding support for Zod schemas
+        jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider() // <-- Adding support for Ajv validation
+    }
+);
+```
+
+## Example Server using Valibot and CfWorker
+
+```ts
+import { ValibotToJsonSchemaPlugin } from '@enth/mcp-sdk/valibot';
+import { CfWorkerJsonSchemaValidatorProvider } from '@enth/mcp-sdk/cfworker';
+
+return new Server(
+    {
+        name: 'test server',
+        version: '1.0'
+    },
+    {
+        capabilities: {},
+        toJsonSchemaPlugins: [new ValibotToJsonSchemaPlugin()], // <-- Adding support for Valibot schemas
+        jsonSchemaValidatorProvider: new CfWorkerJsonSchemaValidatorProvider() // <-- Adding support for CfWorker validation
+    }
+);
+```
+
+## Example McpServer using Typebox
+
+```ts
+import { TypeboxJsonSchemaValidatorProvider } from '@enth/mcp-sdk/typebox';
+
+return new McpServer(
+    {
+        name: 'test server',
+        version: '1.0'
+    },
+    {
+        capabilities: {},
+        // toJsonSchemaPlugins: <-- no plugin required
+        jsonSchemaValidatorProvider: new TypeboxJsonSchemaValidatorProvider() // <-- Adding support for Typebox validation
+    }
+);
+```
 
 <details>
 <summary>Table of Contents</summary>

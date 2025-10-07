@@ -1,16 +1,15 @@
 import pkceChallenge from 'pkce-challenge';
-import { LATEST_PROTOCOL_VERSION } from '../types.js';
-import {
+import { LATEST_PROTOCOL_VERSION } from '@enth/mcp-specs/draft';
+import type {
     OAuthClientMetadata,
     OAuthClientInformation,
     OAuthTokens,
     OAuthMetadata,
     OAuthClientInformationFull,
     OAuthProtectedResourceMetadata,
-    OAuthErrorResponseSchema,
-    AuthorizationServerMetadata,
-    OpenIdProviderDiscoveryMetadataSchema
+    AuthorizationServerMetadata
 } from '../shared/auth.js';
+import { OAuthErrorResponseSchema, OpenIdProviderDiscoveryMetadataSchema } from '../shared/auth.js';
 import {
     OAuthClientInformationFullSchema,
     OAuthMetadataSchema,
@@ -26,7 +25,7 @@ import {
     ServerError,
     UnauthorizedClientError
 } from '../server/auth/errors.js';
-import { FetchLike } from '../shared/transport.js';
+import type { FetchLike } from '../shared/transport.js';
 
 /**
  * Implements an end-to-end OAuth client to be used with one MCP server.

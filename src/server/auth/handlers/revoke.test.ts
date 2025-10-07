@@ -1,10 +1,13 @@
-import { revocationHandler, RevocationHandlerOptions } from './revoke.js';
-import { OAuthServerProvider, AuthorizationParams } from '../provider.js';
-import { OAuthRegisteredClientsStore } from '../clients.js';
-import { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from '../../../shared/auth.js';
-import express, { Response } from 'express';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
+import type { RevocationHandlerOptions } from './revoke.js';
+import { revocationHandler } from './revoke.js';
+import type { OAuthServerProvider, AuthorizationParams } from '../provider.js';
+import type { OAuthRegisteredClientsStore } from '../clients.js';
+import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from '../../../shared/auth.js';
+import type { Response } from 'express';
+import express from 'express';
 import supertest from 'supertest';
-import { AuthInfo } from '../types.js';
+import type { AuthInfo } from '../types.js';
 import { InvalidTokenError } from '../errors.js';
 
 describe('Revocation Handler', () => {
@@ -130,7 +133,7 @@ describe('Revocation Handler', () => {
 
     describe('Request handling', () => {
         let app: express.Express;
-        let spyRevokeToken: jest.SpyInstance;
+        let spyRevokeToken: MockInstance;
 
         beforeEach(() => {
             // Setup express app with revocation handler
@@ -139,7 +142,7 @@ describe('Revocation Handler', () => {
             app.use('/revoke', revocationHandler(options));
 
             // Spy on the revokeToken method
-            spyRevokeToken = jest.spyOn(mockProviderWithRevocation, 'revokeToken');
+            spyRevokeToken = vi.spyOn(mockProviderWithRevocation, 'revokeToken');
         });
 
         afterEach(() => {

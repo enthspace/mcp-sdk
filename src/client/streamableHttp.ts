@@ -1,6 +1,8 @@
-import { Transport, FetchLike } from '../shared/transport.js';
-import { isInitializedNotification, isJSONRPCRequest, isJSONRPCResponse, JSONRPCMessage, JSONRPCMessageSchema } from '../types.js';
-import { auth, AuthResult, extractResourceMetadataUrl, OAuthClientProvider, UnauthorizedError } from './auth.js';
+import type { Transport, FetchLike } from '../shared/transport.js';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import { validateJSONRPCMessage, isJSONRPCResponse, isInitializedNotification } from '@enth/mcp-specs/draft';
+import type { AuthResult, OAuthClientProvider } from './auth.js';
+import { auth, extractResourceMetadataUrl, UnauthorizedError } from './auth.js';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 
 // Default reconnection options for StreamableHTTP connections
@@ -131,7 +133,6 @@ export class StreamableHTTPClientTransport implements Transport {
     private _sessionId?: string;
     private _reconnectionOptions: StreamableHTTPReconnectionOptions;
     private _protocolVersion?: string;
-    private _hasCompletedAuthFlow = false; // Circuit breaker: detect auth success followed by immediate 401
 
     onclose?: () => void;
     onerror?: (error: Error) => void;
@@ -296,7 +297,11 @@ export class StreamableHTTPClientTransport implements Transport {
         }, delay);
     }
 
-    private _handleSseStream(stream: ReadableStream<Uint8Array> | null, options: StartSSEOptions, isReconnectable: boolean): void {
+    private _handleSseStream(
+        stream: ReadableStream<Uint8Array<ArrayBuffer>> | null,
+        options: StartSSEOptions,
+        validateReconnectable: boolean
+    ): void {
         if (!stream) {
             return;
         }
@@ -323,15 +328,19 @@ export class StreamableHTTPClientTransport implements Transport {
                     }
 
                     if (!event.event || event.event === 'message') {
-                        try {
-                            const message = JSONRPCMessageSchema.parse(JSON.parse(event.data));
-                            if (replayMessageId !== undefined && isJSONRPCResponse(message)) {
-                                message.id = replayMessageId;
-                            }
-                            this.onmessage?.(message);
-                        } catch (error) {
-                            this.onerror?.(error as Error);
+                        const message = JSON.parse(event.data);
+                        const validatedMessage = validateJSONRPCMessage(message);
+                        if (!validatedMessage.valid) {
+                            const error = new Error(`Invalid JSON-RPC message: ${validatedMessage.errorMessage}`);
+                            this.onerror?.(error);
+                            return;
                         }
+
+                        if (replayMessageId !== undefined && isJSONRPCResponse(message)) {
+                            message.id = replayMessageId;
+                        }
+
+                        this.onmessage?.(message);
                     }
                 }
             } catch (error) {
@@ -339,7 +348,7 @@ export class StreamableHTTPClientTransport implements Transport {
                 this.onerror?.(new Error(`SSE stream disconnected: ${error}`));
 
                 // Attempt to reconnect if the stream disconnects unexpectedly and we aren't closing
-                if (isReconnectable && this._abortController && !this._abortController.signal.aborted) {
+                if (validateReconnectable && this._abortController && !this._abortController.signal.aborted) {
                     // Use the exponential backoff reconnection strategy
                     try {
                         this._scheduleReconnection(
@@ -404,9 +413,11 @@ export class StreamableHTTPClientTransport implements Transport {
 
             if (resumptionToken) {
                 // If we have at last event ID, we need to reconnect the SSE stream
-                this._startOrAuthSse({ resumptionToken, replayMessageId: isJSONRPCRequest(message) ? message.id : undefined }).catch(err =>
-                    this.onerror?.(err)
-                );
+                this._startOrAuthSse({
+                    resumptionToken,
+                    replayMessageId: !Array.isArray(message) && 'id' in message ? message.id : undefined,
+                    onresumptiontoken
+                }).catch(err => this.onerror?.(err));
                 return;
             }
 
@@ -432,11 +443,6 @@ export class StreamableHTTPClientTransport implements Transport {
 
             if (!response.ok) {
                 if (response.status === 401 && this._authProvider) {
-                    // Prevent infinite recursion when server returns 401 after successful auth
-                    if (this._hasCompletedAuthFlow) {
-                        throw new StreamableHTTPError(401, 'Server returned 401 after successful authentication');
-                    }
-
                     this._resourceMetadataUrl = extractResourceMetadataUrl(response);
 
                     const result = await auth(this._authProvider, {
@@ -448,8 +454,6 @@ export class StreamableHTTPClientTransport implements Transport {
                         throw new UnauthorizedError();
                     }
 
-                    // Mark that we completed auth flow
-                    this._hasCompletedAuthFlow = true;
                     // Purposely _not_ awaited, so we don't call onerror twice
                     return this.send(message);
                 }
@@ -457,9 +461,6 @@ export class StreamableHTTPClientTransport implements Transport {
                 const text = await response.text().catch(() => null);
                 throw new Error(`Error POSTing to endpoint (HTTP ${response.status}): ${text}`);
             }
-
-            // Reset auth loop flag on successful response
-            this._hasCompletedAuthFlow = false;
 
             // If the response is 202 Accepted, there's no body to process
             if (response.status === 202) {
@@ -489,12 +490,17 @@ export class StreamableHTTPClientTransport implements Transport {
                 } else if (contentType?.includes('application/json')) {
                     // For non-streaming servers, we might get direct JSON responses
                     const data = await response.json();
-                    const responseMessages = Array.isArray(data)
-                        ? data.map(msg => JSONRPCMessageSchema.parse(msg))
-                        : [JSONRPCMessageSchema.parse(data)];
+                    const responseMessages: unknown[] = Array.isArray(data) ? data : [data];
+
+                    const results = responseMessages.map(msg => validateJSONRPCMessage(msg)).filter(result => !result.valid);
+                    if (results.length > 0) {
+                        const error = new Error(`Invalid JSON-RPC message in response: ${results.map(r => r.errorMessage).join('; ')}`);
+                        this.onerror?.(error);
+                        return;
+                    }
 
                     for (const msg of responseMessages) {
-                        this.onmessage?.(msg);
+                        this.onmessage?.(msg as JSONRPCMessage);
                     }
                 } else {
                     throw new StreamableHTTPError(-1, `Unexpected content type: ${contentType}`);

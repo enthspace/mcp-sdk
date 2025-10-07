@@ -1,4 +1,5 @@
-import { JSONRPCMessage } from '../types.js';
+import { test, expect } from 'vitest';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
 import { ReadBuffer } from './stdio.js';
 
 const testMessage: JSONRPCMessage = {

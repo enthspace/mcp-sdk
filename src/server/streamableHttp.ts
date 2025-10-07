@@ -1,22 +1,24 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { Transport } from '../shared/transport.js';
+import type { Transport } from '../shared/transport.js';
+import { SUPPORTED_PROTOCOL_VERSIONS, DEFAULT_NEGOTIATED_PROTOCOL_VERSION } from '../constants.js';
+import type { JSONRPCMessage, RequestId } from '@enth/mcp-specs/draft';
 import {
-    MessageExtraInfo,
-    RequestInfo,
+    JSONRPC_VERSION,
+    validateJSONRPCMessage,
+    validateJSONRPCError,
+    validateJSONRPCRequest,
+    validateJSONRPCResponse,
     isInitializeRequest,
-    isJSONRPCError,
     isJSONRPCRequest,
-    isJSONRPCResponse,
-    JSONRPCMessage,
-    JSONRPCMessageSchema,
-    RequestId,
-    SUPPORTED_PROTOCOL_VERSIONS,
-    DEFAULT_NEGOTIATED_PROTOCOL_VERSION
-} from '../types.js';
+    isJSONRPCError,
+    isJSONRPCResponse
+} from '@enth/mcp-specs/draft';
+import type { MessageExtraInfo, RequestInfo } from '../types.js';
+
 import getRawBody from 'raw-body';
 import contentType from 'content-type';
 import { randomUUID } from 'node:crypto';
-import { AuthInfo } from './auth/types.js';
+import type { AuthInfo } from './auth/types.js';
 
 const MAXIMUM_MESSAGE_SIZE = '4mb';
 
@@ -226,7 +228,7 @@ export class StreamableHTTPServerTransport implements Transport {
         if (validationError) {
             res.writeHead(403).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32000,
                         message: validationError
@@ -258,7 +260,7 @@ export class StreamableHTTPServerTransport implements Transport {
         if (!acceptHeader?.includes('text/event-stream')) {
             res.writeHead(406).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32000,
                         message: 'Not Acceptable: Client must accept text/event-stream'
@@ -305,7 +307,7 @@ export class StreamableHTTPServerTransport implements Transport {
             // Only one GET SSE stream is allowed per session
             res.writeHead(409).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32000,
                         message: 'Conflict: Only one SSE stream is allowed per session'
@@ -394,7 +396,7 @@ export class StreamableHTTPServerTransport implements Transport {
             Allow: 'GET, POST, DELETE'
         }).end(
             JSON.stringify({
-                jsonrpc: '2.0',
+                jsonrpc: JSONRPC_VERSION,
                 error: {
                     code: -32000,
                     message: 'Method not allowed.'
@@ -415,7 +417,7 @@ export class StreamableHTTPServerTransport implements Transport {
             if (!acceptHeader?.includes('application/json') || !acceptHeader.includes('text/event-stream')) {
                 res.writeHead(406).end(
                     JSON.stringify({
-                        jsonrpc: '2.0',
+                        jsonrpc: JSONRPC_VERSION,
                         error: {
                             code: -32000,
                             message: 'Not Acceptable: Client must accept both application/json and text/event-stream'
@@ -430,7 +432,7 @@ export class StreamableHTTPServerTransport implements Transport {
             if (!ct || !ct.includes('application/json')) {
                 res.writeHead(415).end(
                     JSON.stringify({
-                        jsonrpc: '2.0',
+                        jsonrpc: JSONRPC_VERSION,
                         error: {
                             code: -32000,
                             message: 'Unsupported Media Type: Content-Type must be application/json'
@@ -456,25 +458,36 @@ export class StreamableHTTPServerTransport implements Transport {
                 rawMessage = JSON.parse(body.toString());
             }
 
-            let messages: JSONRPCMessage[];
+            const messages: JSONRPCMessage[] = Array.isArray(rawMessage) ? rawMessage : [rawMessage];
 
-            // handle batch and single messages
-            if (Array.isArray(rawMessage)) {
-                messages = rawMessage.map(msg => JSONRPCMessageSchema.parse(msg));
-            } else {
-                messages = [JSONRPCMessageSchema.parse(rawMessage)];
+            const errors = messages.map(msg => validateJSONRPCMessage(msg)).filter(result => !result.valid);
+            if (errors.length > 0) {
+                const errorData = errors.map(e => e.errorMessage).join('; ');
+                const error = new Error(`Invalid JSON-RPC error message: ${errorData}`);
+                res.writeHead(400).end(
+                    JSON.stringify({
+                        jsonrpc: JSONRPC_VERSION,
+                        error: {
+                            code: -32600,
+                            message: 'Invalid Request',
+                            data: errorData
+                        },
+                        id: null
+                    })
+                );
+                this.onerror?.(error);
+                return;
             }
 
             // Check if this is an initialization request
             // https://spec.modelcontextprotocol.io/specification/2025-03-26/basic/lifecycle/
-            const isInitializationRequest = messages.some(isInitializeRequest);
-            if (isInitializationRequest) {
+            if (messages.some(message => isInitializeRequest(message))) {
                 // If it's a server with session management and the session ID is already set we should reject the request
                 // to avoid re-initialization.
                 if (this._initialized && this.sessionId !== undefined) {
                     res.writeHead(400).end(
                         JSON.stringify({
-                            jsonrpc: '2.0',
+                            jsonrpc: JSONRPC_VERSION,
                             error: {
                                 code: -32600,
                                 message: 'Invalid Request: Server already initialized'
@@ -487,7 +500,7 @@ export class StreamableHTTPServerTransport implements Transport {
                 if (messages.length > 1) {
                     res.writeHead(400).end(
                         JSON.stringify({
-                            jsonrpc: '2.0',
+                            jsonrpc: JSONRPC_VERSION,
                             error: {
                                 code: -32600,
                                 message: 'Invalid Request: Only one initialization request is allowed'
@@ -505,8 +518,7 @@ export class StreamableHTTPServerTransport implements Transport {
                 if (this.sessionId && this._onsessioninitialized) {
                     await Promise.resolve(this._onsessioninitialized(this.sessionId));
                 }
-            }
-            if (!isInitializationRequest) {
+            } else {
                 // If an Mcp-Session-Id is returned by the server during initialization,
                 // clients using the Streamable HTTP transport MUST include it
                 // in the Mcp-Session-Id header on all of their subsequent HTTP requests.
@@ -520,9 +532,7 @@ export class StreamableHTTPServerTransport implements Transport {
             }
 
             // check if it contains requests
-            const hasRequests = messages.some(isJSONRPCRequest);
-
-            if (!hasRequests) {
+            if (!messages.some(message => isJSONRPCRequest(message))) {
                 // if it only contains notifications or responses, return 202
                 res.writeHead(202).end();
 
@@ -530,7 +540,7 @@ export class StreamableHTTPServerTransport implements Transport {
                 for (const message of messages) {
                     this.onmessage?.(message, { authInfo, requestInfo });
                 }
-            } else if (hasRequests) {
+            } else {
                 // The default behavior is to use SSE streaming
                 // but in some cases server will return JSON responses
                 const streamId = randomUUID();
@@ -551,9 +561,10 @@ export class StreamableHTTPServerTransport implements Transport {
                 // Store the response for this request to send messages back through this connection
                 // We need to track by request ID to maintain the connection
                 for (const message of messages) {
-                    if (isJSONRPCRequest(message)) {
+                    const validatedMessage = validateJSONRPCRequest(message);
+                    if (validatedMessage.valid) {
                         this._streamMapping.set(streamId, res);
-                        this._requestToStreamMapping.set(message.id, streamId);
+                        this._requestToStreamMapping.set(validatedMessage.data.id, streamId);
                     }
                 }
                 // Set up close handler for client disconnects
@@ -577,7 +588,7 @@ export class StreamableHTTPServerTransport implements Transport {
             // return JSON-RPC formatted error
             res.writeHead(400).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32700,
                         message: 'Parse error',
@@ -619,7 +630,7 @@ export class StreamableHTTPServerTransport implements Transport {
             // If the server has not been initialized yet, reject all requests
             res.writeHead(400).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32000,
                         message: 'Bad Request: Server not initialized'
@@ -636,7 +647,7 @@ export class StreamableHTTPServerTransport implements Transport {
             // Non-initialization requests without a session ID should return 400 Bad Request
             res.writeHead(400).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32000,
                         message: 'Bad Request: Mcp-Session-Id header is required'
@@ -648,7 +659,7 @@ export class StreamableHTTPServerTransport implements Transport {
         } else if (Array.isArray(sessionId)) {
             res.writeHead(400).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32000,
                         message: 'Bad Request: Mcp-Session-Id header must be a single value'
@@ -661,7 +672,7 @@ export class StreamableHTTPServerTransport implements Transport {
             // Reject requests with invalid session ID with 404 Not Found
             res.writeHead(404).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32001,
                         message: 'Session not found'
@@ -684,7 +695,7 @@ export class StreamableHTTPServerTransport implements Transport {
         if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
             res.writeHead(400).end(
                 JSON.stringify({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     error: {
                         code: -32000,
                         message: `Bad Request: Unsupported protocol version (supported versions: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')})`
@@ -711,9 +722,15 @@ export class StreamableHTTPServerTransport implements Transport {
 
     async send(message: JSONRPCMessage, options?: { relatedRequestId?: RequestId }): Promise<void> {
         let requestId = options?.relatedRequestId;
-        if (isJSONRPCResponse(message) || isJSONRPCError(message)) {
+        const validatedResponse = validateJSONRPCResponse(message);
+        if (validatedResponse.valid) {
             // If the message is a response, use the request ID from the message
-            requestId = message.id;
+            requestId = validatedResponse.data.id;
+        }
+        const validatedError = validateJSONRPCError(message);
+        if (validatedError.valid) {
+            // If the message is a response, use the request ID from the message
+            requestId = validatedError.data.id;
         }
 
         // Check if this message should be sent on the standalone SSE stream (no request ID)

@@ -1,26 +1,34 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable no-constant-binary-expression */
 /* eslint-disable @typescript-eslint/no-unused-expressions */
+import { describe, it, test, expect, vi } from 'vitest';
 import { Server } from './index.js';
 import { z } from 'zod';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../constants.js';
+import { ErrorCode } from '../errors.js';
+import type {
+    CreateMessageRequest,
+    ElicitRequest,
+    ListPromptsRequest,
+    ListResourcesRequest,
+    ListToolsRequest,
+    LoggingMessageNotification,
+    SetLevelRequest
+} from '@enth/mcp-specs/draft';
 import {
-    RequestSchema,
-    NotificationSchema,
-    ResultSchema,
     LATEST_PROTOCOL_VERSION,
-    SUPPORTED_PROTOCOL_VERSIONS,
-    CreateMessageRequestSchema,
-    ElicitRequestSchema,
-    ListPromptsRequestSchema,
-    ListResourcesRequestSchema,
-    ListToolsRequestSchema,
-    SetLevelRequestSchema,
-    ErrorCode,
-    LoggingMessageNotification
-} from '../types.js';
-import { Transport } from '../shared/transport.js';
+    validateCreateMessageRequest,
+    validateElicitRequest,
+    validateListPromptsRequest,
+    validateListResourcesRequest,
+    validateListToolsRequest,
+    validateSetLevelRequest
+} from '@enth/mcp-specs/draft';
+import type { Transport } from '../shared/transport.js';
 import { InMemoryTransport } from '../inMemory.js';
 import { Client } from '../client/index.js';
+import { ZodToJsonSchemaPlugin } from '../zod/index.js';
+import { AjvJsonSchemaValidatorProvider } from 'src/ajv/index.js';
 
 test('should accept latest protocol version', async () => {
     let sendPromiseResolve: (value: unknown) => void;
@@ -29,9 +37,9 @@ test('should accept latest protocol version', async () => {
     });
 
     const serverTransport: Transport = {
-        start: jest.fn().mockResolvedValue(undefined),
-        close: jest.fn().mockResolvedValue(undefined),
-        send: jest.fn().mockImplementation(message => {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(message => {
             if (message.id === 1 && message.result) {
                 expect(message.result).toEqual({
                     protocolVersion: LATEST_PROTOCOL_VERSION,
@@ -92,9 +100,9 @@ test('should accept supported older protocol version', async () => {
     });
 
     const serverTransport: Transport = {
-        start: jest.fn().mockResolvedValue(undefined),
-        close: jest.fn().mockResolvedValue(undefined),
-        send: jest.fn().mockImplementation(message => {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(message => {
             if (message.id === 1 && message.result) {
                 expect(message.result).toEqual({
                     protocolVersion: OLD_VERSION,
@@ -152,9 +160,9 @@ test('should handle unsupported protocol version', async () => {
     });
 
     const serverTransport: Transport = {
-        start: jest.fn().mockResolvedValue(undefined),
-        close: jest.fn().mockResolvedValue(undefined),
-        send: jest.fn().mockImplementation(message => {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockImplementation(message => {
             if (message.id === 1 && message.result) {
                 expect(message.result).toEqual({
                     protocolVersion: LATEST_PROTOCOL_VERSION,
@@ -235,17 +243,21 @@ test('should respect client capabilities', async () => {
     );
 
     // Implement request handler for sampling/createMessage
-    client.setRequestHandler(CreateMessageRequestSchema, async request => {
-        // Mock implementation of createMessage
-        return {
-            model: 'test-model',
-            role: 'assistant',
-            content: {
-                type: 'text',
-                text: 'This is a test response'
-            }
-        };
-    });
+    client.setRequestHandler(
+        'sampling/createMessage' satisfies CreateMessageRequest['method'],
+        validateCreateMessageRequest,
+        async request => {
+            // Mock implementation of createMessage
+            return {
+                model: 'test-model',
+                role: 'assistant',
+                content: {
+                    type: 'text',
+                    text: 'This is a test response'
+                }
+            };
+        }
+    );
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -278,7 +290,8 @@ test('should respect client elicitation capabilities', async () => {
                 tools: {},
                 logging: {}
             },
-            enforceStrictCapabilities: true
+            enforceStrictCapabilities: true,
+            jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
         }
     );
 
@@ -294,7 +307,7 @@ test('should respect client elicitation capabilities', async () => {
         }
     );
 
-    client.setRequestHandler(ElicitRequestSchema, params => ({
+    client.setRequestHandler('elicitation/create' satisfies ElicitRequest['method'], validateElicitRequest, params => ({
         action: 'accept',
         content: {
             username: params.params.message.includes('username') ? 'test-user' : undefined,
@@ -360,7 +373,8 @@ test('should validate elicitation response against requested schema', async () =
                 tools: {},
                 logging: {}
             },
-            enforceStrictCapabilities: true
+            enforceStrictCapabilities: true,
+            jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
         }
     );
 
@@ -377,7 +391,7 @@ test('should validate elicitation response against requested schema', async () =
     );
 
     // Set up client to return valid response
-    client.setRequestHandler(ElicitRequestSchema, request => ({
+    client.setRequestHandler('elicitation/create' satisfies ElicitRequest['method'], validateElicitRequest, request => ({
         action: 'accept',
         content: {
             name: 'John Doe',
@@ -454,7 +468,7 @@ test('should reject elicitation response with invalid data', async () => {
     );
 
     // Set up client to return invalid response (missing required field, invalid age)
-    client.setRequestHandler(ElicitRequestSchema, request => ({
+    client.setRequestHandler('elicitation/create' satisfies ElicitRequest['method'], validateElicitRequest, request => ({
         action: 'accept',
         content: {
             email: '', // Invalid - too short
@@ -523,7 +537,7 @@ test('should allow elicitation reject and cancel without validation', async () =
     );
 
     let requestCount = 0;
-    client.setRequestHandler(ElicitRequestSchema, request => {
+    client.setRequestHandler('elicitation/create' satisfies ElicitRequest['method'], validateElicitRequest, request => {
         requestCount++;
         if (requestCount === 1) {
             return { action: 'decline' };
@@ -611,22 +625,24 @@ test('should only allow setRequestHandler for declared capabilities', () => {
 
     // These should work because the capabilities are declared
     expect(() => {
-        server.setRequestHandler(ListPromptsRequestSchema, () => ({ prompts: [] }));
+        server.setRequestHandler('prompts/list' satisfies ListPromptsRequest['method'], validateListPromptsRequest, () => ({
+            prompts: []
+        }));
     }).not.toThrow();
 
     expect(() => {
-        server.setRequestHandler(ListResourcesRequestSchema, () => ({
+        server.setRequestHandler('resources/list' satisfies ListResourcesRequest['method'], validateListResourcesRequest, () => ({
             resources: []
         }));
     }).not.toThrow();
 
     // These should throw because the capabilities are not declared
     expect(() => {
-        server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [] }));
+        server.setRequestHandler('tools/list' satisfies ListToolsRequest['method'], validateListToolsRequest, () => ({ tools: [] }));
     }).toThrow(/^Server does not support tools/);
 
     expect(() => {
-        server.setRequestHandler(SetLevelRequestSchema, () => ({}));
+        server.setRequestHandler('logging/setLevel' satisfies SetLevelRequest['method'], validateSetLevelRequest, () => ({}));
     }).toThrow(/^Server does not support logging/);
 });
 
@@ -634,14 +650,14 @@ test('should only allow setRequestHandler for declared capabilities', () => {
   Test that custom request/notification/result schemas can be used with the Server class.
   */
 test('should typecheck', () => {
-    const GetWeatherRequestSchema = RequestSchema.extend({
+    const GetWeatherRequestSchema = z.object({
         method: z.literal('weather/get'),
         params: z.object({
             city: z.string()
         })
     });
 
-    const GetForecastRequestSchema = RequestSchema.extend({
+    const GetForecastRequestSchema = z.object({
         method: z.literal('weather/forecast'),
         params: z.object({
             city: z.string(),
@@ -649,7 +665,7 @@ test('should typecheck', () => {
         })
     });
 
-    const WeatherForecastNotificationSchema = NotificationSchema.extend({
+    const WeatherForecastNotificationSchema = z.object({
         method: z.literal('weather/alert'),
         params: z.object({
             severity: z.enum(['warning', 'watch']),
@@ -659,7 +675,7 @@ test('should typecheck', () => {
 
     const WeatherRequestSchema = GetWeatherRequestSchema.or(GetForecastRequestSchema);
     const WeatherNotificationSchema = WeatherForecastNotificationSchema;
-    const WeatherResultSchema = ResultSchema.extend({
+    const WeatherResultSchema = z.object({
         temperature: z.number(),
         conditions: z.string()
     });
@@ -675,6 +691,8 @@ test('should typecheck', () => {
             version: '1.0.0'
         },
         {
+            toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()],
+            jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider(),
             capabilities: {
                 prompts: {},
                 resources: {},
@@ -705,7 +723,7 @@ test('should handle server cancelling a request', async () => {
         },
         {
             capabilities: {
-                sampling: {}
+                // sampling: {},
             }
         }
     );
@@ -723,17 +741,21 @@ test('should handle server cancelling a request', async () => {
     );
 
     // Set up client to delay responding to createMessage
-    client.setRequestHandler(CreateMessageRequestSchema, async (_request, extra) => {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        return {
-            model: 'test',
-            role: 'assistant',
-            content: {
-                type: 'text',
-                text: 'Test response'
-            }
-        };
-    });
+    client.setRequestHandler(
+        'sampling/createMessage' satisfies CreateMessageRequest['method'],
+        validateCreateMessageRequest,
+        async (_request, extra) => {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return {
+                model: 'test',
+                role: 'assistant',
+                content: {
+                    type: 'text',
+                    text: 'Test response'
+                }
+            };
+        }
+    );
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -766,7 +788,7 @@ test('should handle request timeout', async () => {
         },
         {
             capabilities: {
-                sampling: {}
+                // sampling: {},
             }
         }
     );
@@ -784,24 +806,28 @@ test('should handle request timeout', async () => {
         }
     );
 
-    client.setRequestHandler(CreateMessageRequestSchema, async (_request, extra) => {
-        await new Promise((resolve, reject) => {
-            const timeout = setTimeout(resolve, 100);
-            extra.signal.addEventListener('abort', () => {
-                clearTimeout(timeout);
-                reject(extra.signal.reason);
+    client.setRequestHandler(
+        'sampling/createMessage' satisfies CreateMessageRequest['method'],
+        validateCreateMessageRequest,
+        async (_request, extra) => {
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(resolve, 100);
+                extra.signal.addEventListener('abort', () => {
+                    clearTimeout(timeout);
+                    reject(extra.signal.reason);
+                });
             });
-        });
 
-        return {
-            model: 'test',
-            role: 'assistant',
-            content: {
-                type: 'text',
-                text: 'Test response'
-            }
-        };
-    });
+            return {
+                model: 'test',
+                role: 'assistant',
+                content: {
+                    type: 'text',
+                    text: 'Test response'
+                }
+            };
+        }
+    );
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -870,7 +896,7 @@ test('should respect log level for transport without sessionId', async () => {
     };
 
     // Test the one that makes it through
-    clientTransport.onmessage = jest.fn().mockImplementation(message => {
+    clientTransport.onmessage = vi.fn().mockImplementation(message => {
         expect(message).toEqual({
             jsonrpc: '2.0',
             method: 'notifications/message',
@@ -939,7 +965,7 @@ test('should respect log level for transport with sessionId', async () => {
     };
 
     // Test the one that makes it through
-    clientTransport.onmessage = jest.fn().mockImplementation(message => {
+    clientTransport.onmessage = vi.fn().mockImplementation(message => {
         expect(message).toEqual({
             jsonrpc: '2.0',
             method: 'notifications/message',

@@ -1,6 +1,6 @@
-import { Transport } from './shared/transport.js';
-import { JSONRPCMessage, RequestId } from './types.js';
-import { AuthInfo } from './server/auth/types.js';
+import type { Transport } from './shared/transport.js';
+import type { JSONRPCMessage, RequestId } from '@enth/mcp-specs/draft';
+import type { AuthInfo } from './server/auth/types.js';
 
 interface QueuedMessage {
     message: JSONRPCMessage;

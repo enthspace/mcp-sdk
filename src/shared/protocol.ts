@@ -1,32 +1,47 @@
-import { ZodLiteral, ZodObject, ZodType, z } from 'zod';
-import {
-    CancelledNotificationSchema,
+import type {
+    CancelledNotification,
     ClientCapabilities,
-    ErrorCode,
-    isJSONRPCError,
-    isJSONRPCRequest,
-    isJSONRPCResponse,
-    isJSONRPCNotification,
     JSONRPCError,
     JSONRPCNotification,
     JSONRPCRequest,
     JSONRPCResponse,
-    McpError,
     Notification,
-    PingRequestSchema,
-    Progress,
+    PingRequest,
     ProgressNotification,
-    ProgressNotificationSchema,
     Request,
     RequestId,
     Result,
-    ServerCapabilities,
-    RequestMeta,
-    MessageExtraInfo,
-    RequestInfo
-} from '../types.js';
-import { Transport, TransportSendOptions } from './transport.js';
-import { AuthInfo } from '../server/auth/types.js';
+    ServerCapabilities
+} from '@enth/mcp-specs/draft';
+import {
+    JSONRPC_VERSION,
+    validateJSONRPCError,
+    validateJSONRPCNotification,
+    validateJSONRPCRequest,
+    validateJSONRPCResponse,
+    validatePingRequest,
+    validateCancelledNotification,
+    validateProgressNotification
+} from '@enth/mcp-specs/draft';
+
+import { ErrorCode, McpError } from '../errors.js';
+import type { MessageExtraInfo, RequestInfo } from '../types.js';
+import type { Transport, TransportSendOptions } from './transport.js';
+import type { AuthInfo } from '../server/auth/types.js';
+import type { Static, TSchema } from 'typebox'; // Types Only - 0kb
+import type { JsonSchemaType, JsonSchemaValidator, JsonSchemaValidatorResult } from '@enth/mcp-specs';
+
+export type Progress = {
+    [x: string]: unknown;
+    progress: number;
+    message?: string | undefined;
+    total?: number | undefined;
+};
+
+export type RequestMeta = {
+    [x: string]: unknown;
+    progressToken?: string | number | undefined;
+};
 
 /**
  * Callback for progress notifications.
@@ -52,6 +67,9 @@ export type ProtocolOptions = {
      * e.g., ['notifications/tools/list_changed']
      */
     debouncedNotificationMethods?: string[];
+
+    jsonSchemaValidatorProvider?: JsonSchemaValidatorProvider;
+    toJsonSchemaPlugins?: ToJsonSchemaPlugin<TSchema>[];
 };
 
 /**
@@ -152,7 +170,11 @@ export type RequestHandlerExtra<SendRequestT extends Request, SendNotificationT 
      *
      * This is used by certain transports to correctly associate related messages.
      */
-    sendRequest: <U extends ZodType<object>>(request: SendRequestT, resultSchema: U, options?: RequestOptions) => Promise<z.infer<U>>;
+    sendRequest: <TResultSchema extends TSchema, TResult = Static<TResultSchema>>(
+        request: SendRequestT,
+        resultSchema: TResultSchema | JsonSchemaValidator<TResult>,
+        options?: RequestOptions
+    ) => Promise<TResult>;
 };
 
 /**
@@ -166,6 +188,27 @@ type TimeoutInfo = {
     resetTimeoutOnProgress: boolean;
     onTimeout: () => void;
 };
+
+export interface JsonSchemaValidatorProvider {
+    getValidator<T>(schema: JsonSchemaType<T>): JsonSchemaValidator<T>;
+}
+
+export class FailureJsonSchemaValidatorProvider implements JsonSchemaValidatorProvider {
+    getValidator<T>(_schema: JsonSchemaType<T>): JsonSchemaValidator<T> {
+        return (_input: unknown): JsonSchemaValidatorResult<T> => {
+            return {
+                valid: false,
+                data: undefined,
+                errorMessage: 'Validation failed: no validator available'
+            };
+        };
+    }
+}
+
+export interface ToJsonSchemaPlugin<TSchemaType extends TSchema> {
+    isValidSchema(schema: object): schema is TSchemaType;
+    toJsonSchema<T>(schema: TSchemaType): JsonSchemaType<T>;
+}
 
 /**
  * Implements MCP protocol framing on top of a pluggable transport, including
@@ -184,6 +227,8 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
     private _progressHandlers: Map<number, ProgressCallback> = new Map();
     private _timeoutInfo: Map<number, TimeoutInfo> = new Map();
     private _pendingDebouncedNotifications = new Set<string>();
+    public jsonSchemaValidatorProvider: JsonSchemaValidatorProvider;
+    public toJsonSchemaPlugins?: ToJsonSchemaPlugin<TSchema>[];
 
     /**
      * Callback for when the connection is closed for any reason.
@@ -210,17 +255,28 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
     fallbackNotificationHandler?: (notification: Notification) => Promise<void>;
 
     constructor(private _options?: ProtocolOptions) {
-        this.setNotificationHandler(CancelledNotificationSchema, notification => {
-            const controller = this._requestHandlerAbortControllers.get(notification.params.requestId);
-            controller?.abort(notification.params.reason);
-        });
+        this.jsonSchemaValidatorProvider = _options?.jsonSchemaValidatorProvider || new FailureJsonSchemaValidatorProvider();
+        this.toJsonSchemaPlugins = _options?.toJsonSchemaPlugins || [];
+        this.setNotificationHandler(
+            'notifications/cancelled' satisfies CancelledNotification['method'],
+            validateCancelledNotification,
+            notification => {
+                const controller = this._requestHandlerAbortControllers.get(notification.params.requestId);
+                controller?.abort(notification.params.reason);
+            }
+        );
 
-        this.setNotificationHandler(ProgressNotificationSchema, notification => {
-            this._onprogress(notification as unknown as ProgressNotification);
-        });
+        this.setNotificationHandler(
+            'notifications/progress' satisfies ProgressNotification['method'],
+            validateProgressNotification,
+            notification => {
+                this._onprogress(notification as unknown as ProgressNotification);
+            }
+        );
 
         this.setRequestHandler(
-            PingRequestSchema,
+            'ping' satisfies PingRequest['method'],
+            validatePingRequest,
             // Automatic pong by default.
             _request => ({}) as SendResultT
         );
@@ -285,21 +341,35 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
         const _onerror = this.transport?.onerror;
         this._transport.onerror = (error: Error) => {
             _onerror?.(error);
-            this._onerror(error);
+            this._onerror(new Error('Transport error: ' + JSON.stringify(error)));
         };
 
         const _onmessage = this._transport?.onmessage;
         this._transport.onmessage = (message, extra) => {
             _onmessage?.(message, extra);
-            if (isJSONRPCResponse(message) || isJSONRPCError(message)) {
-                this._onresponse(message);
-            } else if (isJSONRPCRequest(message)) {
-                this._onrequest(message, extra);
-            } else if (isJSONRPCNotification(message)) {
-                this._onnotification(message);
-            } else {
-                this._onerror(new Error(`Unknown message type: ${JSON.stringify(message)}`));
+
+            const validatedResponse = validateJSONRPCResponse(message);
+            if (validatedResponse.valid) {
+                this._onresponse(validatedResponse.data);
+                return;
             }
+            const validatedError = validateJSONRPCError(message);
+            if (validatedError.valid) {
+                this._onresponse(validatedError.data);
+                return;
+            }
+            const validatedRequest = validateJSONRPCRequest(message);
+            if (validatedRequest.valid) {
+                this._onrequest(validatedRequest.data, extra);
+                return;
+            }
+            const validatedNotification = validateJSONRPCNotification(message);
+            if (validatedNotification.valid) {
+                this._onnotification(validatedNotification.data);
+                return;
+            }
+
+            this._onerror(new Error(`Unknown message type: ${JSON.stringify(message)}`));
         };
 
         await this._transport.start();
@@ -320,21 +390,30 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
     }
 
     private _onerror(error: Error): void {
-        this.onerror?.(error);
+        this.onerror?.(new Error('Protocol error: ' + error.message + ' ' + JSON.stringify(error)));
     }
 
     private _onnotification(notification: JSONRPCNotification): void {
-        const handler = this._notificationHandlers.get(notification.method) ?? this.fallbackNotificationHandler;
+        try {
+            const handler = this._notificationHandlers.get(notification.method) ?? this.fallbackNotificationHandler;
 
-        // Ignore notifications not being subscribed to.
-        if (handler === undefined) {
-            return;
+            // Ignore notifications not being subscribed to.
+            if (handler === undefined) {
+                return;
+            }
+
+            if (typeof handler !== 'function') {
+                this._onerror(new Error(`Invalid notification handler for ${notification.method}: ${handler}`));
+                return;
+            }
+
+            // Starting with Promise.resolve() puts any synchronous errors into the monad as well.
+            Promise.resolve()
+                .then(() => handler(notification))
+                .catch(error => this._onerror(new Error(`Uncaught error in notification handler for ${notification.method}: ${error}`)));
+        } catch (error) {
+            this._onerror(new Error(`Uncaught error calling notification handler for ${notification.method}: ${error}`));
         }
-
-        // Starting with Promise.resolve() puts any synchronous errors into the monad as well.
-        Promise.resolve()
-            .then(() => handler(notification))
-            .catch(error => this._onerror(new Error(`Uncaught error in notification handler: ${error}`)));
     }
 
     private _onrequest(request: JSONRPCRequest, extra?: MessageExtraInfo): void {
@@ -346,7 +425,7 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
         if (handler === undefined) {
             capturedTransport
                 ?.send({
-                    jsonrpc: '2.0',
+                    jsonrpc: JSONRPC_VERSION,
                     id: request.id,
                     error: {
                         code: ErrorCode.MethodNotFound,
@@ -365,7 +444,12 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
             sessionId: capturedTransport?.sessionId,
             _meta: request.params?._meta,
             sendNotification: notification => this.notification(notification, { relatedRequestId: request.id }),
-            sendRequest: (r, resultSchema, options?) => this.request(r, resultSchema, { ...options, relatedRequestId: request.id }),
+            // TODO should this be the method and validator instead of the schema?
+            sendRequest: <TResultSchema extends TSchema, TResultInner = Static<TResultSchema>>(
+                r: SendRequestT,
+                resultSchema: TResultSchema | JsonSchemaValidator<TResultInner>,
+                options?: RequestOptions
+            ) => this.request<TResultSchema, TResultInner>(r, resultSchema as TResultSchema, { ...options, relatedRequestId: request.id }),
             authInfo: extra?.authInfo,
             requestId: request.id,
             requestInfo: extra?.requestInfo
@@ -382,7 +466,7 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
 
                     return capturedTransport?.send({
                         result,
-                        jsonrpc: '2.0',
+                        jsonrpc: JSONRPC_VERSION,
                         id: request.id
                     });
                 },
@@ -392,11 +476,12 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
                     }
 
                     return capturedTransport?.send({
-                        jsonrpc: '2.0',
+                        jsonrpc: JSONRPC_VERSION,
                         id: request.id,
                         error: {
                             code: Number.isSafeInteger(error['code']) ? error['code'] : ErrorCode.InternalError,
-                            message: error.message ?? 'Internal error'
+                            message: error.message + JSON.stringify(error) + JSON.stringify(request)
+                            // message: error.message ?? "Internal error",
                         }
                     });
                 }
@@ -444,10 +529,12 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
         this._progressHandlers.delete(messageId);
         this._cleanupTimeout(messageId);
 
-        if (isJSONRPCResponse(response)) {
-            handler(response);
+        const validatedResponse = validateJSONRPCResponse(response);
+        if (validatedResponse.valid) {
+            handler(validatedResponse.data);
         } else {
-            const error = new McpError(response.error.code, response.error.message, response.error.data);
+            const errorResponse = response as JSONRPCError;
+            const error = new McpError(errorResponse.error.code, `JSONRPCError: ${errorResponse.error.message}`, errorResponse.error.data);
             handler(error);
         }
     }
@@ -489,8 +576,34 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
      *
      * Do not use this method to emit notifications! Use notification() instead.
      */
-    request<T extends ZodType<object>>(request: SendRequestT, resultSchema: T, options?: RequestOptions): Promise<z.infer<T>> {
+    request<TResult>(request: SendRequestT, resultValidator: JsonSchemaValidator<TResult>, options?: RequestOptions): Promise<TResult>;
+
+    /**
+     * Sends a request and wait for a response.
+     *
+     * Do not use this method to emit notifications! Use notification() instead.
+     */
+    request<TResultSchema extends TSchema, TResult = Static<TResultSchema>>(
+        request: SendRequestT,
+        resultSchema: TResultSchema,
+        options?: RequestOptions
+    ): Promise<TResult>;
+
+    /**
+     * Sends a request and wait for a response.
+     *
+     * Do not use this method to emit notifications! Use notification() instead.
+     */
+    request<TResult>(request: SendRequestT, resultSchemaOrValidator: unknown, options?: RequestOptions): Promise<TResult> {
         const { relatedRequestId, resumptionToken, onresumptiontoken } = options ?? {};
+
+        let validator: JsonSchemaValidator<TResult>;
+        if (typeof resultSchemaOrValidator === 'function') {
+            validator = resultSchemaOrValidator as JsonSchemaValidator<TResult>;
+        } else {
+            const jsonSchema = this.toJsonSchema<TResult>(resultSchemaOrValidator as TSchema);
+            validator = this.createValidator<TResult>(jsonSchema);
+        }
 
         return new Promise((resolve, reject) => {
             if (!this._transport) {
@@ -507,7 +620,7 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
             const messageId = this._requestMessageId++;
             const jsonrpcRequest: JSONRPCRequest = {
                 ...request,
-                jsonrpc: '2.0',
+                jsonrpc: JSONRPC_VERSION,
                 id: messageId
             };
 
@@ -530,7 +643,7 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
                 this._transport
                     ?.send(
                         {
-                            jsonrpc: '2.0',
+                            jsonrpc: JSONRPC_VERSION,
                             method: 'notifications/cancelled',
                             params: {
                                 requestId: messageId,
@@ -553,10 +666,14 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
                     return reject(response);
                 }
 
-                try {
-                    const result = resultSchema.parse(response.result);
-                    resolve(result);
-                } catch (error) {
+                const validatedResult = validator(response.result);
+                if (validatedResult.valid) {
+                    resolve(validatedResult.data);
+                } else {
+                    const error = new McpError(
+                        ErrorCode.InvalidParams,
+                        `Structured content does not match the tool's output schema: ${validatedResult.errorMessage}`
+                    );
                     reject(error);
                 }
             });
@@ -614,11 +731,13 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
 
                 const jsonrpcNotification: JSONRPCNotification = {
                     ...notification,
-                    jsonrpc: '2.0'
+                    jsonrpc: JSONRPC_VERSION
                 };
                 // Send the notification, but don't await it here to avoid blocking.
                 // Handle potential errors with a .catch().
-                this._transport?.send(jsonrpcNotification, options).catch(error => this._onerror(error));
+                this._transport
+                    ?.send(jsonrpcNotification, options)
+                    .catch(error => this._onerror(new Error('Error sending notification' + JSON.stringify(error))));
             });
 
             // Return immediately.
@@ -627,7 +746,7 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
 
         const jsonrpcNotification: JSONRPCNotification = {
             ...notification,
-            jsonrpc: '2.0'
+            jsonrpc: JSONRPC_VERSION
         };
 
         await this._transport.send(jsonrpcNotification, options);
@@ -638,19 +757,63 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
      *
      * Note that this will replace any previous request handler for the same method.
      */
-    setRequestHandler<
-        T extends ZodObject<{
-            method: ZodLiteral<string>;
-        }>
-    >(
-        requestSchema: T,
-        handler: (request: z.infer<T>, extra: RequestHandlerExtra<SendRequestT, SendNotificationT>) => SendResultT | Promise<SendResultT>
-    ): void {
-        const method = requestSchema.shape.method.value;
+    setRequestHandler<TRequest>(
+        method: string,
+        requestValidator: JsonSchemaValidator<TRequest>,
+        handler: (request: TRequest, extra: RequestHandlerExtra<SendRequestT, SendNotificationT>) => SendResultT | Promise<SendResultT>
+    ): void;
+
+    /**
+     * Registers a handler to invoke when this protocol object receives a request with the given method.
+     *
+     * Note that this will replace any previous request handler for the same method.
+     */
+    setRequestHandler<TRequestSchema extends TSchema, TRequest = Static<TRequestSchema>>(
+        requestSchema: TRequestSchema,
+        handler: (request: TRequest, extra: RequestHandlerExtra<SendRequestT, SendNotificationT>) => SendResultT | Promise<SendResultT>
+    ): void;
+
+    /**
+     * Registers a handler to invoke when this protocol object receives a request with the given method.
+     *
+     * Note that this will replace any previous request handler for the same method.
+     */
+    setRequestHandler<TRequest>(...args: unknown[]): void {
+        let method: string,
+            requestValidator: JsonSchemaValidator<TRequest>,
+            handler: (request: TRequest, extra: RequestHandlerExtra<SendRequestT, SendNotificationT>) => SendResultT | Promise<SendResultT>;
+
+        if (args.length === 3) {
+            method = args[0] as string;
+            requestValidator = args[1] as JsonSchemaValidator<TRequest>;
+            handler = args[2] as (
+                request: TRequest,
+                extra: RequestHandlerExtra<SendRequestT, SendNotificationT>
+            ) => SendResultT | Promise<SendResultT>;
+        } else if (args.length === 2) {
+            const jsonSchema = this.toJsonSchema<TRequest>(args[0] as TSchema);
+            method = jsonSchema.properties?.method?.const;
+            requestValidator = this.createValidator<TRequest>(jsonSchema);
+            handler = args[1] as (
+                request: TRequest,
+                extra: RequestHandlerExtra<SendRequestT, SendNotificationT>
+            ) => SendResultT | Promise<SendResultT>;
+        } else {
+            throw new Error(`Invalid arguments to setRequestHandler: ${args}`);
+        }
+
         this.assertRequestHandlerCapability(method);
 
         this._requestHandlers.set(method, (request, extra) => {
-            return Promise.resolve(handler(requestSchema.parse(request), extra));
+            const validatedRequest = requestValidator(request);
+            if (!validatedRequest.valid) {
+                const error = new McpError(
+                    ErrorCode.InvalidParams,
+                    `Request for ${request.method} did not match expected schema: ${validatedRequest.errorMessage}`
+                );
+                return Promise.reject(error);
+            }
+            return Promise.resolve(handler(validatedRequest.data, extra));
         });
     }
 
@@ -675,14 +838,54 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
      *
      * Note that this will replace any previous notification handler for the same method.
      */
-    setNotificationHandler<
-        T extends ZodObject<{
-            method: ZodLiteral<string>;
-        }>
-    >(notificationSchema: T, handler: (notification: z.infer<T>) => void | Promise<void>): void {
-        this._notificationHandlers.set(notificationSchema.shape.method.value, notification =>
-            Promise.resolve(handler(notificationSchema.parse(notification)))
-        );
+    async setNotificationHandler<TRequest>(
+        method: string,
+        requestValidator: JsonSchemaValidator<TRequest>,
+        handler: (notification: TRequest) => void | Promise<void>
+    ): Promise<void>;
+
+    /**
+     * Registers a handler to invoke when this protocol object receives a notification with the given method.
+     *
+     * Note that this will replace any previous notification handler for the same method.
+     */
+    async setNotificationHandler<TRequestSchema extends TSchema, TRequest = Static<TRequestSchema>>(
+        requestSchema: TRequestSchema,
+        handler: (notification: TRequest) => void | Promise<void>
+    ): Promise<void>;
+
+    /**
+     * Registers a handler to invoke when this protocol object receives a notification with the given method.
+     *
+     * Note that this will replace any previous notification handler for the same method.
+     */
+    async setNotificationHandler<TRequest>(...args: unknown[]): Promise<void> {
+        let method: string, requestValidator: JsonSchemaValidator<TRequest>, handler: (notification: TRequest) => void | Promise<void>;
+
+        if (args.length === 3) {
+            method = args[0] as string;
+            requestValidator = args[1] as JsonSchemaValidator<TRequest>;
+            handler = args[2] as (notification: TRequest) => void | Promise<void>;
+        } else if (args.length === 2) {
+            const jsonSchema = this.toJsonSchema<TRequest>(args[0] as TSchema);
+            method = jsonSchema.properties?.method?.const;
+            requestValidator = this.createValidator<TRequest>(jsonSchema);
+            handler = args[1] as (notification: TRequest) => void | Promise<void>;
+        } else {
+            throw new Error(`Invalid arguments to setNotificationHandler: ${args}`);
+        }
+
+        this._notificationHandlers.set(method, async notification => {
+            const validationResult = requestValidator(notification);
+            if (!validationResult.valid) {
+                const error = new McpError(
+                    ErrorCode.InvalidParams,
+                    `Notification for ${notification.method} did not match expected schema: ${validationResult.errorMessage}`
+                );
+                return await Promise.reject(error);
+            }
+            await Promise.resolve(handler(validationResult.data));
+        });
     }
 
     /**
@@ -691,14 +894,46 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
     removeNotificationHandler(method: string): void {
         this._notificationHandlers.delete(method);
     }
+
+    // #region Validator Helpers
+    public isJsonSchemaObject(schema: object): schema is JsonSchemaType<unknown> {
+        return (
+            'type' in schema &&
+            typeof schema.type === 'string' &&
+            (!('$schema' in schema) || typeof schema.$schema === 'string') &&
+            (!('$id' in schema) || typeof schema.$id === 'string') &&
+            (!('properties' in schema) ||
+                (typeof schema.properties === 'object' && schema.properties !== null && !Array.isArray(schema.properties))) &&
+            (!('required' in schema) || (Array.isArray(schema.required) && schema.required.every(item => typeof item === 'string')))
+        );
+    }
+
+    public toJsonSchema<T>(schema: TSchema): JsonSchemaType<T> {
+        for (const plugin of this.toJsonSchemaPlugins ?? []) {
+            if (plugin.isValidSchema(schema)) {
+                return plugin.toJsonSchema<T>(schema);
+            }
+        }
+        if (this.isJsonSchemaObject(schema)) {
+            return schema as JsonSchemaType<T>;
+        }
+        throw new Error(`No plugin available to convert schema to JSON Schema: ${JSON.stringify(schema)}`);
+    }
+
+    public createValidator<T>(schema: JsonSchemaType<T>): JsonSchemaValidator<T> {
+        return this.jsonSchemaValidatorProvider.getValidator<T>(schema);
+    }
+    // #endregion Validator Helpers
 }
 
 export function mergeCapabilities<T extends ServerCapabilities | ClientCapabilities>(base: T, additional: T): T {
     return Object.entries(additional).reduce(
         (acc, [key, value]) => {
             if (value && typeof value === 'object') {
+                // @ts-expect-error the official TS types do not have `[key: string]: unknown`. Should they?
                 acc[key] = acc[key] ? { ...acc[key], ...value } : value;
             } else {
+                // @ts-expect-error the official TS types do not have `[key: string]: unknown`. Should they?
                 acc[key] = value;
             }
             return acc;

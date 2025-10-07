@@ -1,5 +1,6 @@
-import { Transport } from '../shared/transport.js';
-import { JSONRPCMessage, JSONRPCMessageSchema } from '../types.js';
+import type { Transport } from '../shared/transport.js';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import { validateJSONRPCMessage } from '@enth/mcp-specs/draft';
 
 const SUBPROTOCOL = 'mcp';
 
@@ -43,15 +44,15 @@ export class WebSocketClientTransport implements Transport {
             };
 
             this._socket.onmessage = (event: MessageEvent) => {
-                let message: JSONRPCMessage;
-                try {
-                    message = JSONRPCMessageSchema.parse(JSON.parse(event.data));
-                } catch (error) {
-                    this.onerror?.(error as Error);
+                const message: unknown = JSON.parse(event.data);
+                const validatedMessage = validateJSONRPCMessage(message);
+                if (!validatedMessage.valid) {
+                    const error = new Error(`Invalid JSON-RPC message: ${validatedMessage.errorMessage}`);
+                    this.onerror?.(error);
                     return;
                 }
 
-                this.onmessage?.(message);
+                this.onmessage?.(validatedMessage.data);
             };
         });
     }

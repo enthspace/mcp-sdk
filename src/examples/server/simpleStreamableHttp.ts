@@ -1,21 +1,16 @@
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
+import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { McpServer } from '../../server/mcp.js';
 import { StreamableHTTPServerTransport } from '../../server/streamableHttp.js';
 import { getOAuthProtectedResourceMetadataUrl, mcpAuthMetadataRouter } from '../../server/auth/router.js';
 import { requireBearerAuth } from '../../server/auth/middleware/bearerAuth.js';
-import {
-    CallToolResult,
-    GetPromptResult,
-    isInitializeRequest,
-    PrimitiveSchemaDefinition,
-    ReadResourceResult,
-    ResourceLink
-} from '../../types.js';
+import type { CallToolResult, GetPromptResult, PrimitiveSchemaDefinition, ReadResourceResult, ResourceLink } from '@enth/mcp-specs/draft';
+import { isInitializeRequest } from '@enth/mcp-specs/draft';
 import { InMemoryEventStore } from '../shared/inMemoryEventStore.js';
 import { setupAuthServer } from './demoInMemoryOAuthProvider.js';
-import { OAuthMetadata } from 'src/shared/auth.js';
+import type { OAuthMetadata } from 'src/shared/auth.js';
 import { checkResourceAllowed } from 'src/shared/auth-utils.js';
 
 import cors from 'cors';
@@ -42,9 +37,9 @@ const getServer = () => {
         {
             title: 'Greeting Tool', // Display name for UI
             description: 'A simple greeting tool',
-            inputSchema: {
+            inputSchema: z.object({
                 name: z.string().describe('Name to greet')
-            }
+            })
         },
         async ({ name }): Promise<CallToolResult> => {
             return {
@@ -62,9 +57,9 @@ const getServer = () => {
     server.tool(
         'multi-greet',
         'A tool that sends different greetings with delays between them',
-        {
+        z.object({
             name: z.string().describe('Name to greet')
-        },
+        }),
         {
             title: 'Multiple Greeting Tool',
             readOnlyHint: true,
@@ -116,9 +111,9 @@ const getServer = () => {
     server.tool(
         'collect-user-info',
         'A tool that collects user information through elicitation',
-        {
+        z.object({
             infoType: z.enum(['contact', 'preferences', 'feedback']).describe('Type of information to collect')
-        },
+        }),
         async ({ infoType }): Promise<CallToolResult> => {
             let message: string;
             let requestedSchema: {
@@ -267,9 +262,9 @@ const getServer = () => {
         {
             title: 'Greeting Template', // Display name for UI
             description: 'A simple greeting prompt template',
-            argsSchema: {
+            argsSchema: z.object({
                 name: z.string().describe('Name to include in greeting')
-            }
+            })
         },
         async ({ name }): Promise<GetPromptResult> => {
             return {
@@ -290,10 +285,10 @@ const getServer = () => {
     server.tool(
         'start-notification-stream',
         'Starts sending periodic notifications for testing resumability',
-        {
+        z.object({
             interval: z.number().describe('Interval in milliseconds between notifications').default(100),
             count: z.number().describe('Number of notifications to send (0 for 100)').default(50)
-        },
+        }),
         async ({ interval, count }, extra): Promise<CallToolResult> => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
             let counter = 0;
@@ -394,9 +389,9 @@ const getServer = () => {
         {
             title: 'List Files with ResourceLinks',
             description: 'Returns a list of files as ResourceLinks without embedding their content',
-            inputSchema: {
+            inputSchema: z.object({
                 includeDescriptions: z.boolean().optional().describe('Whether to include descriptions in the resource links')
-            }
+            })
         },
         async ({ includeDescriptions = true }): Promise<CallToolResult> => {
             const resourceLinks: ResourceLink[] = [

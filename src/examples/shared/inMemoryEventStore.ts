@@ -1,5 +1,5 @@
-import { JSONRPCMessage } from '../../types.js';
-import { EventStore } from '../../server/streamableHttp.js';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import type { EventStore } from '../../server/streamableHttp.js';
 
 /**
  * Simple in-memory implementation of the EventStore interface for resumability

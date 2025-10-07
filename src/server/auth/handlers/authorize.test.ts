@@ -1,10 +1,13 @@
-import { authorizationHandler, AuthorizationHandlerOptions } from './authorize.js';
-import { OAuthServerProvider, AuthorizationParams } from '../provider.js';
-import { OAuthRegisteredClientsStore } from '../clients.js';
-import { OAuthClientInformationFull, OAuthTokens } from '../../../shared/auth.js';
-import express, { Response } from 'express';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { AuthorizationHandlerOptions } from './authorize.js';
+import { authorizationHandler } from './authorize.js';
+import type { OAuthServerProvider, AuthorizationParams } from '../provider.js';
+import type { OAuthRegisteredClientsStore } from '../clients.js';
+import type { OAuthClientInformationFull, OAuthTokens } from '../../../shared/auth.js';
+import type { Response } from 'express';
+import express from 'express';
 import supertest from 'supertest';
-import { AuthInfo } from '../types.js';
+import type { AuthInfo } from '../types.js';
 import { InvalidTokenError } from '../errors.js';
 
 describe('Authorization Handler', () => {
@@ -252,7 +255,7 @@ describe('Authorization Handler', () => {
 
     describe('Resource parameter validation', () => {
         it('propagates resource parameter', async () => {
-            const mockProviderWithResource = jest.spyOn(mockProvider, 'authorize');
+            const mockProviderWithResource = vi.spyOn(mockProvider, 'authorize');
 
             const response = await supertest(app).get('/authorize').query({
                 client_id: 'valid-client',

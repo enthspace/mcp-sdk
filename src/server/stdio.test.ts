@@ -1,6 +1,7 @@
+import { test, expect, beforeEach } from 'vitest';
 import { Readable, Writable } from 'node:stream';
 import { ReadBuffer, serializeMessage } from '../shared/stdio.js';
-import { JSONRPCMessage } from '../types.js';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
 import { StdioServerTransport } from './stdio.js';
 
 let input: Readable;

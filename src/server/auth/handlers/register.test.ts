@@ -1,6 +1,8 @@
-import { clientRegistrationHandler, ClientRegistrationHandlerOptions } from './register.js';
-import { OAuthRegisteredClientsStore } from '../clients.js';
-import { OAuthClientInformationFull, OAuthClientMetadata } from '../../../shared/auth.js';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
+import type { ClientRegistrationHandlerOptions } from './register.js';
+import { clientRegistrationHandler } from './register.js';
+import type { OAuthRegisteredClientsStore } from '../clients.js';
+import type { OAuthClientInformationFull, OAuthClientMetadata } from '../../../shared/auth.js';
 import express from 'express';
 import supertest from 'supertest';
 
@@ -45,7 +47,7 @@ describe('Client Registration Handler', () => {
 
     describe('Request handling', () => {
         let app: express.Express;
-        let spyRegisterClient: jest.SpyInstance;
+        let spyRegisterClient: MockInstance;
 
         beforeEach(() => {
             // Setup express app with registration handler
@@ -58,7 +60,7 @@ describe('Client Registration Handler', () => {
             app.use('/register', clientRegistrationHandler(options));
 
             // Spy on the registerClient method
-            spyRegisterClient = jest.spyOn(mockClientStoreWithRegistration, 'registerClient');
+            spyRegisterClient = vi.spyOn(mockClientStoreWithRegistration, 'registerClient');
         });
 
         afterEach(() => {

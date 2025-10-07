@@ -1,5 +1,7 @@
+import { describe, expect, beforeEach, test } from 'vitest';
 import { allowedMethods } from './allowedMethods.js';
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
+import express from 'express';
 import request from 'supertest';
 
 describe('allowedMethods', () => {

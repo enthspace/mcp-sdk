@@ -1,13 +1,17 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { AddressInfo } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { Client } from '../client/index.js';
 import { StreamableHTTPClientTransport } from '../client/streamableHttp.js';
 import { McpServer } from '../server/mcp.js';
 import { StreamableHTTPServerTransport } from '../server/streamableHttp.js';
-import { CallToolResultSchema, LoggingMessageNotificationSchema } from '../types.js';
 import { z } from 'zod';
 import { InMemoryEventStore } from '../examples/shared/inMemoryEventStore.js';
+import type { LoggingMessageNotification } from '@enth/mcp-specs/draft';
+import { validateCallToolResult, validateLoggingMessageNotification } from '@enth/mcp-specs/draft';
+import { AjvJsonSchemaValidatorProvider } from '../ajv/index.js';
+import { ZodToJsonSchemaPlugin } from '../zod/index.js';
 
 describe('Transport resumability', () => {
     let server: Server;
@@ -21,15 +25,22 @@ describe('Transport resumability', () => {
         eventStore = new InMemoryEventStore();
 
         // Create a simple MCP server
-        mcpServer = new McpServer({ name: 'test-server', version: '1.0.0' }, { capabilities: { logging: {} } });
+        mcpServer = new McpServer(
+            { name: 'test-server', version: '1.0.0' },
+            {
+                capabilities: { logging: {} },
+                toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()],
+                jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
+            }
+        );
 
         // Add a simple notification tool that completes quickly
         mcpServer.tool(
             'send-notification',
             'Sends a single notification',
-            {
+            z.object({
                 message: z.string().describe('Message to send').default('Test notification')
-            },
+            }),
             async ({ message }, { sendNotification }) => {
                 // Send notification immediately
                 await sendNotification({
@@ -50,10 +61,10 @@ describe('Transport resumability', () => {
         mcpServer.tool(
             'run-notifications',
             'Sends multiple notifications over time',
-            {
+            z.object({
                 count: z.number().describe('Number of notifications to send').default(10),
                 interval: z.number().describe('Interval between notifications in ms').default(50)
-            },
+            }),
             async ({ count, interval }, { sendNotification }) => {
                 // Send notifications at specified intervals
                 for (let i = 0; i < count; i++) {
@@ -145,23 +156,27 @@ describe('Transport resumability', () => {
     // across client disconnection/reconnection
     it('should resume long-running notifications with lastEventId', async () => {
         // Create unique client ID for this test
-        const clientId = 'test-client-long-running';
+        // const clientId = 'test-client-long-running';
         const notifications = [];
         let lastEventId: string | undefined;
 
         // Create first client
         const client1 = new Client({
-            id: clientId,
+            // id: clientId,
             name: 'test-client',
             version: '1.0.0'
         });
 
         // Set up notification handler for first client
-        client1.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
-            if (notification.method === 'notifications/message') {
-                notifications.push(notification.params);
+        client1.setNotificationHandler(
+            'notifications/message' satisfies LoggingMessageNotification['method'],
+            validateLoggingMessageNotification,
+            notification => {
+                if (notification.method === 'notifications/message') {
+                    notifications.push(notification.params);
+                }
             }
-        });
+        );
 
         // Connect first client
         const transport1 = new StreamableHTTPClientTransport(baseUrl);
@@ -170,7 +185,7 @@ describe('Transport resumability', () => {
         expect(sessionId).toBeDefined();
 
         // Start a long-running notification stream with tracking of lastEventId
-        const onLastEventIdUpdate = jest.fn((eventId: string) => {
+        const onLastEventIdUpdate = vi.fn((eventId: string) => {
             lastEventId = eventId;
         });
         expect(lastEventId).toBeUndefined();
@@ -186,7 +201,7 @@ describe('Transport resumability', () => {
                     }
                 }
             },
-            CallToolResultSchema,
+            validateCallToolResult,
             {
                 resumptionToken: lastEventId,
                 onresumptiontoken: onLastEventIdUpdate
@@ -223,17 +238,21 @@ describe('Transport resumability', () => {
 
         // Create second client with same client ID
         const client2 = new Client({
-            id: clientId,
+            // id: clientId,
             name: 'test-client',
             version: '1.0.0'
         });
 
         // Set up notification handler for second client
-        client2.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
-            if (notification.method === 'notifications/message') {
-                notifications.push(notification.params);
+        client2.setNotificationHandler(
+            'notifications/message' satisfies LoggingMessageNotification['method'],
+            validateLoggingMessageNotification,
+            notification => {
+                if (notification.method === 'notifications/message') {
+                    notifications.push(notification.params);
+                }
             }
-        });
+        );
 
         // Connect second client with same session ID
         const transport2 = new StreamableHTTPClientTransport(baseUrl, {
@@ -254,7 +273,7 @@ describe('Transport resumability', () => {
                     }
                 }
             },
-            CallToolResultSchema,
+            validateCallToolResult,
             {
                 resumptionToken: lastEventId, // Pass the lastEventId from the previous session
                 onresumptiontoken: onLastEventIdUpdate

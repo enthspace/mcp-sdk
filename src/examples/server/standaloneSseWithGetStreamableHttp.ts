@@ -1,8 +1,10 @@
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
+import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '../../server/mcp.js';
 import { StreamableHTTPServerTransport } from '../../server/streamableHttp.js';
-import { isInitializeRequest, ReadResourceResult } from '../../types.js';
+import type { ReadResourceResult } from '@enth/mcp-specs/draft';
+import { isInitializeRequest } from '@enth/mcp-specs/draft';
 
 // Create an MCP server with implementation details
 const server = new McpServer({

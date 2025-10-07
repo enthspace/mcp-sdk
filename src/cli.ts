@@ -11,7 +11,7 @@ import { WebSocketClientTransport } from './client/websocket.js';
 import { Server } from './server/index.js';
 import { SSEServerTransport } from './server/sse.js';
 import { StdioServerTransport } from './server/stdio.js';
-import { ListResourcesResultSchema } from './types.js';
+import { validateListResourcesResult } from '@enth/mcp-specs/draft';
 
 async function runClient(url_or_command: string, args: string[]) {
     const client = new Client(
@@ -51,7 +51,7 @@ async function runClient(url_or_command: string, args: string[]) {
     await client.connect(clientTransport);
     console.log('Initialized.');
 
-    await client.request({ method: 'resources/list' }, ListResourcesResultSchema);
+    await client.request({ method: 'resources/list' }, validateListResourcesResult);
 
     await client.close();
     console.log('Closed.');

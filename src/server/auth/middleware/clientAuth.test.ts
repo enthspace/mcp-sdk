@@ -1,6 +1,8 @@
-import { authenticateClient, ClientAuthenticationMiddlewareOptions } from './clientAuth.js';
-import { OAuthRegisteredClientsStore } from '../clients.js';
-import { OAuthClientInformationFull } from '../../../shared/auth.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import type { ClientAuthenticationMiddlewareOptions } from './clientAuth.js';
+import { authenticateClient } from './clientAuth.js';
+import type { OAuthRegisteredClientsStore } from '../clients.js';
+import type { OAuthClientInformationFull } from '../../../shared/auth.js';
 import express from 'express';
 import supertest from 'supertest';
 

@@ -1,6 +1,7 @@
+import { describe, test, expect, beforeEach } from 'vitest';
 import { InMemoryTransport } from './inMemory.js';
-import { JSONRPCMessage } from './types.js';
-import { AuthInfo } from './server/auth/types.js';
+import type { JSONRPCMessage } from '@enth/mcp-specs/draft';
+import type { AuthInfo } from './server/auth/types.js';
 
 describe('InMemoryTransport', () => {
     let clientTransport: InMemoryTransport;

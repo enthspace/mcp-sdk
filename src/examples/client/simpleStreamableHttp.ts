@@ -2,25 +2,31 @@ import { Client } from '../../client/index.js';
 import { StreamableHTTPClientTransport } from '../../client/streamableHttp.js';
 import { createInterface } from 'node:readline';
 import {
+    validateGetPromptResult,
+    validateLoggingMessageNotification,
+    validateResourceListChangedNotification,
+    validateListToolsResult,
+    validateCallToolResult,
+    validateListPromptsResult,
+    validateListResourcesResult,
+    validateReadResourceResult,
+    validateElicitRequest
+} from '@enth/mcp-specs/draft';
+import type {
     ListToolsRequest,
-    ListToolsResultSchema,
     CallToolRequest,
-    CallToolResultSchema,
     ListPromptsRequest,
-    ListPromptsResultSchema,
     GetPromptRequest,
-    GetPromptResultSchema,
     ListResourcesRequest,
-    ListResourcesResultSchema,
-    LoggingMessageNotificationSchema,
-    ResourceListChangedNotificationSchema,
-    ElicitRequestSchema,
     ResourceLink,
     ReadResourceRequest,
-    ReadResourceResultSchema
-} from '../../types.js';
+    ElicitRequest,
+    LoggingMessageNotification,
+    ResourceListChangedNotification
+} from '@enth/mcp-specs/draft';
 import { getDisplayName } from '../../shared/metadataUtils.js';
-import Ajv from 'ajv';
+import { Ajv } from 'ajv';
+import addFormats from 'ajv-formats';
 
 // Create readline interface for user input
 const readline = createInterface({
@@ -228,7 +234,7 @@ async function connect(url?: string): Promise<void> {
         };
 
         // Set up elicitation request handler with proper validation
-        client.setRequestHandler(ElicitRequestSchema, async request => {
+        client.setRequestHandler('elicitation/create' satisfies ElicitRequest['method'], validateElicitRequest, async request => {
             console.log('\n🔔 Elicitation Request Received:');
             console.log(`Message: ${request.params.message}`);
             console.log('Requested Schema:');
@@ -240,6 +246,7 @@ async function connect(url?: string): Promise<void> {
 
             // Set up AJV validator for the requested schema
             const ajv = new Ajv();
+            addFormats(ajv);
             const validate = ajv.compile(schema);
 
             let attempts = 0;
@@ -377,7 +384,7 @@ async function connect(url?: string): Promise<void> {
                 if (!isValid) {
                     console.log('❌ Validation errors:');
                     validate.errors?.forEach(error => {
-                        console.log(`  - ${error.dataPath || 'root'}: ${error.message}`);
+                        console.log(`  - ${error.instancePath || 'root'}: ${error.message}`);
                     });
 
                     if (attempts < maxAttempts) {
@@ -425,34 +432,42 @@ async function connect(url?: string): Promise<void> {
         });
 
         // Set up notification handlers
-        client.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
-            notificationCount++;
-            console.log(`\nNotification #${notificationCount}: ${notification.params.level} - ${notification.params.data}`);
-            // Re-display the prompt
-            process.stdout.write('> ');
-        });
-
-        client.setNotificationHandler(ResourceListChangedNotificationSchema, async _ => {
-            console.log(`\nResource list changed notification received!`);
-            try {
-                if (!client) {
-                    console.log('Client disconnected, cannot fetch resources');
-                    return;
-                }
-                const resourcesResult = await client.request(
-                    {
-                        method: 'resources/list',
-                        params: {}
-                    },
-                    ListResourcesResultSchema
-                );
-                console.log('Available resources count:', resourcesResult.resources.length);
-            } catch {
-                console.log('Failed to list resources after change notification');
+        await client.setNotificationHandler(
+            'notifications/message' satisfies LoggingMessageNotification['method'],
+            validateLoggingMessageNotification,
+            notification => {
+                notificationCount++;
+                console.log(`\nNotification #${notificationCount}: ${notification.params.level} - ${notification.params.data}`);
+                // Re-display the prompt
+                process.stdout.write('> ');
             }
-            // Re-display the prompt
-            process.stdout.write('> ');
-        });
+        );
+
+        client.setNotificationHandler(
+            'notifications/resources/list_changed' satisfies ResourceListChangedNotification['method'],
+            validateResourceListChangedNotification,
+            async _ => {
+                console.log(`\nResource list changed notification received!`);
+                try {
+                    if (!client) {
+                        console.log('Client disconnected, cannot fetch resources');
+                        return;
+                    }
+                    const resourcesResult = await client.request(
+                        {
+                            method: 'resources/list',
+                            params: {}
+                        },
+                        validateListResourcesResult
+                    );
+                    console.log('Available resources count:', resourcesResult.resources.length);
+                } catch {
+                    console.log('Failed to list resources after change notification');
+                }
+                // Re-display the prompt
+                process.stdout.write('> ');
+            }
+        );
 
         // Connect the client
         await client.connect(transport);
@@ -526,11 +541,11 @@ async function listTools(): Promise<void> {
     }
 
     try {
-        const toolsRequest: ListToolsRequest = {
+        const toolsRequest: Omit<ListToolsRequest, 'jsonrpc' | 'id'> = {
             method: 'tools/list',
             params: {}
         };
-        const toolsResult = await client.request(toolsRequest, ListToolsResultSchema);
+        const toolsResult = await client.request(toolsRequest, validateListToolsResult);
 
         console.log('Available tools:');
         if (toolsResult.tools.length === 0) {
@@ -552,7 +567,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<vo
     }
 
     try {
-        const request: CallToolRequest = {
+        const request: Omit<CallToolRequest, 'jsonrpc' | 'id'> = {
             method: 'tools/call',
             params: {
                 name,
@@ -561,7 +576,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<vo
         };
 
         console.log(`Calling tool '${name}' with args:`, args);
-        const result = await client.request(request, CallToolResultSchema);
+        const result = await client.request(request, validateCallToolResult);
 
         console.log('Tool result:');
         const resourceLinks: ResourceLink[] = [];
@@ -629,7 +644,7 @@ async function runNotificationsToolWithResumability(interval: number, count: num
         console.log(`Starting notification stream with resumability: interval=${interval}ms, count=${count || 'unlimited'}`);
         console.log(`Using resumption token: ${notificationsToolLastEventId || 'none'}`);
 
-        const request: CallToolRequest = {
+        const request: Omit<CallToolRequest, 'jsonrpc' | 'id'> = {
             method: 'tools/call',
             params: {
                 name: 'start-notification-stream',
@@ -642,7 +657,7 @@ async function runNotificationsToolWithResumability(interval: number, count: num
             console.log(`Updated resumption token: ${event}`);
         };
 
-        const result = await client.request(request, CallToolResultSchema, {
+        const result = await client.request(request, validateCallToolResult, {
             resumptionToken: notificationsToolLastEventId,
             onresumptiontoken: onLastEventIdUpdate
         });
@@ -667,11 +682,11 @@ async function listPrompts(): Promise<void> {
     }
 
     try {
-        const promptsRequest: ListPromptsRequest = {
+        const promptsRequest: Omit<ListPromptsRequest, 'jsonrpc' | 'id'> = {
             method: 'prompts/list',
             params: {}
         };
-        const promptsResult = await client.request(promptsRequest, ListPromptsResultSchema);
+        const promptsResult = await client.request(promptsRequest, validateListPromptsResult);
         console.log('Available prompts:');
         if (promptsResult.prompts.length === 0) {
             console.log('  No prompts available');
@@ -692,7 +707,7 @@ async function getPrompt(name: string, args: Record<string, unknown>): Promise<v
     }
 
     try {
-        const promptRequest: GetPromptRequest = {
+        const promptRequest: Omit<GetPromptRequest, 'jsonrpc' | 'id'> = {
             method: 'prompts/get',
             params: {
                 name,
@@ -700,9 +715,10 @@ async function getPrompt(name: string, args: Record<string, unknown>): Promise<v
             }
         };
 
-        const promptResult = await client.request(promptRequest, GetPromptResultSchema);
+        const promptResult = await client.request(promptRequest, validateGetPromptResult);
         console.log('Prompt template:');
         promptResult.messages.forEach((msg, index) => {
+            // @ts-expect-error Compiler doesn't know it is a text type
             console.log(`  [${index + 1}] ${msg.role}: ${msg.content.text}`);
         });
     } catch (error) {
@@ -717,11 +733,11 @@ async function listResources(): Promise<void> {
     }
 
     try {
-        const resourcesRequest: ListResourcesRequest = {
+        const resourcesRequest: Omit<ListResourcesRequest, 'jsonrpc' | 'id'> = {
             method: 'resources/list',
             params: {}
         };
-        const resourcesResult = await client.request(resourcesRequest, ListResourcesResultSchema);
+        const resourcesResult = await client.request(resourcesRequest, validateListResourcesResult);
 
         console.log('Available resources:');
         if (resourcesResult.resources.length === 0) {
@@ -743,13 +759,13 @@ async function readResource(uri: string): Promise<void> {
     }
 
     try {
-        const request: ReadResourceRequest = {
+        const request: Omit<ReadResourceRequest, 'jsonrpc' | 'id'> = {
             method: 'resources/read',
             params: { uri }
         };
 
         console.log(`Reading resource: ${uri}`);
-        const result = await client.request(request, ReadResourceResultSchema);
+        const result = await client.request(request, validateReadResourceResult);
 
         console.log('Resource contents:');
         for (const content of result.contents) {

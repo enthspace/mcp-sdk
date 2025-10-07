@@ -1,4 +1,4 @@
-import { OAuthClientInformationFull } from '../../shared/auth.js';
+import type { OAuthClientInformationFull } from '../../shared/auth.js';
 
 /**
  * Stores information about registered OAuth clients for this server.

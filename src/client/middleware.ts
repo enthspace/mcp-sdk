@@ -1,5 +1,6 @@
-import { auth, extractResourceMetadataUrl, OAuthClientProvider, UnauthorizedError } from './auth.js';
-import { FetchLike } from '../shared/transport.js';
+import type { OAuthClientProvider } from './auth.js';
+import { auth, extractResourceMetadataUrl, UnauthorizedError } from './auth.js';
+import type { FetchLike } from '../shared/transport.js';
 
 /**
  * Middleware function that wraps and enhances fetch functionality.

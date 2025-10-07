@@ -1,8 +1,10 @@
-import { describe, expect, test, beforeEach } from '@jest/globals';
+import { describe, expect, test, beforeEach } from 'vitest';
 import { Protocol } from './protocol.js';
-import { Transport } from './transport.js';
-import { Request, Notification, Result, JSONRPCMessage } from '../types.js';
+import type { Transport } from './transport.js';
+import type { Request, Notification, Result, JSONRPCMessage } from '@enth/mcp-specs/draft';
 import { z } from 'zod';
+import { ZodToJsonSchemaPlugin } from '../zod/index.js';
+import { AjvJsonSchemaValidatorProvider } from 'src/ajv/index.js';
 
 // Mock Transport class
 class MockTransport implements Transport {
@@ -37,7 +39,10 @@ describe('Protocol transport handling bug', () => {
             protected assertCapabilityForMethod(): void {}
             protected assertNotificationCapability(): void {}
             protected assertRequestHandlerCapability(): void {}
-        })();
+        })({
+            toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()],
+            jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
+        });
 
         transportA = new MockTransport('A');
         transportB = new MockTransport('B');
@@ -50,7 +55,7 @@ describe('Protocol transport handling bug', () => {
             resolveHandler = resolve;
         });
 
-        const TestRequestSchema = z.object({
+        const TestRequestSchema = z.looseObject({
             method: z.literal('test/method'),
             params: z
                 .object({

@@ -1,23 +1,35 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { AddressInfo } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { Client } from '../client/index.js';
 import { StreamableHTTPClientTransport } from '../client/streamableHttp.js';
 import { McpServer } from '../server/mcp.js';
 import { StreamableHTTPServerTransport } from '../server/streamableHttp.js';
-import {
-    CallToolResultSchema,
-    ListToolsResultSchema,
-    ListResourcesResultSchema,
-    ListPromptsResultSchema,
-    LATEST_PROTOCOL_VERSION
-} from '../types.js';
 import { z } from 'zod';
+import {
+    LATEST_PROTOCOL_VERSION,
+    validateListToolsResult,
+    validateListResourcesResult,
+    validateListPromptsResult,
+    validateCallToolResult
+} from '@enth/mcp-specs/draft';
+import { AjvJsonSchemaValidatorProvider } from '../ajv/index.js';
+import { ZodToJsonSchemaPlugin } from '../zod/index.js';
 
 describe('Streamable HTTP Transport Session Management', () => {
     // Function to set up the server with optional session management
     async function setupServer(withSessionManagement: boolean) {
         const server: Server = createServer();
+
+        // Start the server on a random port
+        const baseUrl = await new Promise<URL>(resolve => {
+            server.listen(0, '127.0.0.1', () => {
+                const addr = server.address() as AddressInfo;
+                resolve(new URL(`http://127.0.0.1:${addr.port}`));
+            });
+        });
+
         const mcpServer = new McpServer(
             { name: 'test-server', version: '1.0.0' },
             {
@@ -26,15 +38,17 @@ describe('Streamable HTTP Transport Session Management', () => {
                     tools: {},
                     resources: {},
                     prompts: {}
-                }
+                },
+                jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider(),
+                toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()]
             }
         );
 
         // Add a simple resource
-        mcpServer.resource('test-resource', '/test', { description: 'A test resource' }, async () => ({
+        mcpServer.resource('test-resource', `${baseUrl.origin}/test`, { description: 'A test resource' }, async () => ({
             contents: [
                 {
-                    uri: '/test',
+                    uri: `${baseUrl.origin}/test`,
                     text: 'This is a test resource content'
                 }
             ]
@@ -55,9 +69,9 @@ describe('Streamable HTTP Transport Session Management', () => {
         mcpServer.tool(
             'greet',
             'A simple greeting tool',
-            {
+            z.object({
                 name: z.string().describe('Name to greet').default('World')
-            },
+            }),
             async ({ name }) => {
                 return {
                     content: [{ type: 'text', text: `Hello, ${name}!` }]
@@ -76,14 +90,6 @@ describe('Streamable HTTP Transport Session Management', () => {
 
         server.on('request', async (req, res) => {
             await serverTransport.handleRequest(req, res);
-        });
-
-        // Start the server on a random port
-        const baseUrl = await new Promise<URL>(resolve => {
-            server.listen(0, '127.0.0.1', () => {
-                const addr = server.address() as AddressInfo;
-                resolve(new URL(`http://127.0.0.1:${addr.port}`));
-            });
         });
 
         return { server, mcpServer, serverTransport, baseUrl };
@@ -129,7 +135,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'tools/list',
                     params: {}
                 },
-                ListToolsResultSchema
+                validateListToolsResult
             );
 
             const client2 = new Client({
@@ -149,7 +155,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'tools/list',
                     params: {}
                 },
-                ListToolsResultSchema
+                validateListToolsResult
             );
         });
         it('should operate without session management', async () => {
@@ -171,7 +177,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'tools/list',
                     params: {}
                 },
-                ListToolsResultSchema
+                validateListToolsResult
             );
 
             // Verify tools are accessible
@@ -187,7 +193,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'resources/list',
                     params: {}
                 },
-                ListResourcesResultSchema
+                validateListResourcesResult
             );
 
             // Verify resources result structure
@@ -199,7 +205,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'prompts/list',
                     params: {}
                 },
-                ListPromptsResultSchema
+                validateListPromptsResult
             );
 
             // Verify prompts result structure
@@ -221,7 +227,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                         }
                     }
                 },
-                CallToolResultSchema
+                validateCallToolResult
             );
 
             // Verify tool result
@@ -294,7 +300,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'tools/list',
                     params: {}
                 },
-                ListToolsResultSchema
+                validateListToolsResult
             );
 
             // Verify tools are accessible
@@ -310,7 +316,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'resources/list',
                     params: {}
                 },
-                ListResourcesResultSchema
+                validateListResourcesResult
             );
 
             // Verify resources result structure
@@ -322,7 +328,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                     method: 'prompts/list',
                     params: {}
                 },
-                ListPromptsResultSchema
+                validateListPromptsResult
             );
 
             // Verify prompts result structure
@@ -344,7 +350,7 @@ describe('Streamable HTTP Transport Session Management', () => {
                         }
                     }
                 },
-                CallToolResultSchema
+                validateCallToolResult
             );
 
             // Verify tool result

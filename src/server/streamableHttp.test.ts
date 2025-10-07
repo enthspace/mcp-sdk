@@ -1,11 +1,16 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServer, type Server, IncomingMessage, ServerResponse } from 'node:http';
-import { createServer as netCreateServer, AddressInfo } from 'node:net';
+import type { AddressInfo } from 'node:net';
+import { createServer as netCreateServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { EventStore, StreamableHTTPServerTransport, EventId, StreamId } from './streamableHttp.js';
+import type { EventStore, EventId, StreamId } from './streamableHttp.js';
+import { StreamableHTTPServerTransport } from './streamableHttp.js';
 import { McpServer } from './mcp.js';
-import { CallToolResult, JSONRPCMessage } from '../types.js';
+import type { CallToolResult, JSONRPCMessage } from '@enth/mcp-specs/draft';
 import { z } from 'zod';
-import { AuthInfo } from './auth/types.js';
+import type { AuthInfo } from './auth/types.js';
+import { AjvJsonSchemaValidatorProvider } from 'src/ajv/index.js';
+import { ZodToJsonSchemaPlugin } from 'src/zod/index.js';
 
 async function getFreePort() {
     return new Promise(res => {
@@ -42,12 +47,22 @@ async function createTestServer(config: TestServerConfig = { sessionIdGenerator:
     mcpServer: McpServer;
     baseUrl: URL;
 }> {
-    const mcpServer = new McpServer({ name: 'test-server', version: '1.0.0' }, { capabilities: { logging: {} } });
+    const mcpServer = new McpServer(
+        {
+            name: 'test-server',
+            version: '1.0.0'
+        },
+        {
+            capabilities: { logging: {} },
+            toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()],
+            jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
+        }
+    );
 
     mcpServer.tool(
         'greet',
         'A simple greeting tool',
-        { name: z.string().describe('Name to greet') },
+        z.object({ name: z.string().describe('Name to greet') }),
         async ({ name }): Promise<CallToolResult> => {
             return { content: [{ type: 'text', text: `Hello, ${name}!` }] };
         }
@@ -95,12 +110,19 @@ async function createTestAuthServer(config: TestServerConfig = { sessionIdGenera
     mcpServer: McpServer;
     baseUrl: URL;
 }> {
-    const mcpServer = new McpServer({ name: 'test-server', version: '1.0.0' }, { capabilities: { logging: {} } });
+    const mcpServer = new McpServer(
+        { name: 'test-server', version: '1.0.0' },
+        {
+            capabilities: { logging: {} },
+            toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()],
+            jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
+        }
+    );
 
     mcpServer.tool(
         'profile',
         'A user profile data tool',
-        { active: z.boolean().describe('Profile status') },
+        z.object({ active: z.boolean().describe('Profile status') }),
         async ({ active }, { authInfo }): Promise<CallToolResult> => {
             return { content: [{ type: 'text', text: `${active ? 'Active' : 'Inactive'} profile from token: ${authInfo?.token}!` }] };
         }
@@ -376,7 +398,7 @@ describe('StreamableHTTPServerTransport', () => {
         mcpServer.tool(
             'test-request-info',
             'A simple test tool with request info',
-            { name: z.string().describe('Name to greet') },
+            z.object({ name: z.string().describe('Name to greet') }),
             async ({ name }, { requestInfo }): Promise<CallToolResult> => {
                 return {
                     content: [
@@ -882,7 +904,7 @@ describe('StreamableHTTPServerTransport', () => {
             sessionId = await initializeServer();
 
             // Spy on console.warn to verify warning is logged
-            const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
             // Send request with different but supported protocol version
             const response = await fetch(baseUrl, {
@@ -895,6 +917,9 @@ describe('StreamableHTTPServerTransport', () => {
                 },
                 body: JSON.stringify(TEST_MESSAGES.toolsList)
             });
+
+            // TODO this seems unnecessary
+            expect(warnSpy).toHaveBeenCalledTimes(0);
 
             // Request should still succeed
             expect(response.status).toBe(200);
@@ -1516,7 +1541,7 @@ describe('StreamableHTTPServerTransport in stateless mode', () => {
 // Test onsessionclosed callback
 describe('StreamableHTTPServerTransport onsessionclosed callback', () => {
     it('should call onsessionclosed callback when session is closed via DELETE', async () => {
-        const mockCallback = jest.fn();
+        const mockCallback = vi.fn();
 
         // Create server with onsessionclosed callback
         const result = await createTestServer({
@@ -1578,7 +1603,7 @@ describe('StreamableHTTPServerTransport onsessionclosed callback', () => {
     });
 
     it('should not call onsessionclosed callback for invalid session DELETE', async () => {
-        const mockCallback = jest.fn();
+        const mockCallback = vi.fn();
 
         // Create server with onsessionclosed callback
         const result = await createTestServer({
@@ -1609,7 +1634,7 @@ describe('StreamableHTTPServerTransport onsessionclosed callback', () => {
     });
 
     it('should call onsessionclosed callback with correct session ID when multiple sessions exist', async () => {
-        const mockCallback = jest.fn();
+        const mockCallback = vi.fn();
 
         // Create first server
         const result1 = await createTestServer({
@@ -1773,7 +1798,7 @@ describe('StreamableHTTPServerTransport async callbacks', () => {
     });
 
     it('should propagate errors from async onsessioninitialized callback', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         // Create server with async onsessioninitialized callback that throws
         const result = await createTestServer({
@@ -1790,13 +1815,16 @@ describe('StreamableHTTPServerTransport async callbacks', () => {
         const initResponse = await sendPostRequest(tempUrl, TEST_MESSAGES.initialize);
         expect(initResponse.status).toBe(400);
 
+        // TODO this seems unnecessary
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(0);
+
         // Clean up
         consoleErrorSpy.mockRestore();
         tempServer.close();
     });
 
     it('should propagate errors from async onsessionclosed callback', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         // Create server with async onsessionclosed callback that throws
         const result = await createTestServer({
@@ -1824,6 +1852,7 @@ describe('StreamableHTTPServerTransport async callbacks', () => {
 
         expect(deleteResponse.status).toBe(500);
 
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
         // Clean up
         consoleErrorSpy.mockRestore();
         tempServer.close();

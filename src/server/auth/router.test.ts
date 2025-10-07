@@ -1,10 +1,13 @@
-import { mcpAuthRouter, AuthRouterOptions, mcpAuthMetadataRouter, AuthMetadataOptions } from './router.js';
-import { OAuthServerProvider, AuthorizationParams } from './provider.js';
-import { OAuthRegisteredClientsStore } from './clients.js';
-import { OAuthClientInformationFull, OAuthMetadata, OAuthTokenRevocationRequest, OAuthTokens } from '../../shared/auth.js';
-import express, { Response } from 'express';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { AuthRouterOptions, AuthMetadataOptions } from './router.js';
+import { mcpAuthRouter, mcpAuthMetadataRouter } from './router.js';
+import type { OAuthServerProvider, AuthorizationParams } from './provider.js';
+import type { OAuthRegisteredClientsStore } from './clients.js';
+import type { OAuthClientInformationFull, OAuthMetadata, OAuthTokenRevocationRequest, OAuthTokens } from '../../shared/auth.js';
+import type { Response } from 'express';
+import express from 'express';
 import supertest from 'supertest';
-import { AuthInfo } from './types.js';
+import type { AuthInfo } from './types.js';
 import { InvalidTokenError } from './errors.js';
 
 describe('MCP Auth Router', () => {
@@ -279,11 +282,11 @@ describe('MCP Auth Router', () => {
                 issuerUrl: new URL('https://auth.example.com')
             };
             app.use(mcpAuthRouter(options));
-            jest.spyOn(console, 'error').mockImplementation(() => {});
+            vi.spyOn(console, 'error').mockImplementation(() => {});
         });
 
         afterEach(() => {
-            jest.restoreAllMocks();
+            vi.restoreAllMocks();
         });
 
         it('routes to authorization endpoint', async () => {
@@ -301,8 +304,8 @@ describe('MCP Auth Router', () => {
 
         it('routes to token endpoint', async () => {
             // Setup verifyChallenge mock for token handler
-            jest.mock('pkce-challenge', () => ({
-                verifyChallenge: jest.fn().mockResolvedValue(true)
+            vi.mock('pkce-challenge', () => ({
+                verifyChallenge: vi.fn().mockResolvedValue(true)
             }));
 
             const response = await supertest(app).post('/token').type('form').send({

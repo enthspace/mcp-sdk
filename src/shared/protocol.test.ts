@@ -1,7 +1,11 @@
+import { describe, test, expect, beforeEach, afterEach, it, vi, type MockInstance } from 'vitest';
 import { ZodType, z } from 'zod';
-import { ClientCapabilities, ErrorCode, McpError, Notification, Request, Result, ServerCapabilities } from '../types.js';
+import { ErrorCode, McpError } from '../errors.js';
+import type { ClientCapabilities, Notification, Request, Result, ServerCapabilities } from '@enth/mcp-specs/draft';
 import { Protocol, mergeCapabilities } from './protocol.js';
-import { Transport } from './transport.js';
+import type { Transport } from './transport.js';
+import { ZodToJsonSchemaPlugin } from '../zod/index.js';
+import { AjvJsonSchemaValidatorProvider } from 'src/ajv/index.js';
 
 // Mock Transport class
 class MockTransport implements Transport {
@@ -19,16 +23,19 @@ class MockTransport implements Transport {
 describe('protocol tests', () => {
     let protocol: Protocol<Request, Notification, Result>;
     let transport: MockTransport;
-    let sendSpy: jest.SpyInstance;
+    let sendSpy: MockInstance;
 
     beforeEach(() => {
         transport = new MockTransport();
-        sendSpy = jest.spyOn(transport, 'send');
+        sendSpy = vi.spyOn(transport, 'send');
         protocol = new (class extends Protocol<Request, Notification, Result> {
             protected assertCapabilityForMethod(): void {}
             protected assertNotificationCapability(): void {}
             protected assertRequestHandlerCapability(): void {}
-        })();
+        })({
+            toJsonSchemaPlugins: [new ZodToJsonSchemaPlugin()],
+            jsonSchemaValidatorProvider: new AjvJsonSchemaValidatorProvider()
+        });
     });
 
     test('should throw a timeout error if the request exceeds the timeout', async () => {
@@ -50,7 +57,7 @@ describe('protocol tests', () => {
     });
 
     test('should invoke onclose when the connection is closed', async () => {
-        const oncloseMock = jest.fn();
+        const oncloseMock = vi.fn();
         protocol.onclose = oncloseMock;
         await protocol.connect(transport);
         await transport.close();
@@ -58,9 +65,9 @@ describe('protocol tests', () => {
     });
 
     test('should not overwrite existing hooks when connecting transports', async () => {
-        const oncloseMock = jest.fn();
-        const onerrorMock = jest.fn();
-        const onmessageMock = jest.fn();
+        const oncloseMock = vi.fn();
+        const onerrorMock = vi.fn();
+        const onmessageMock = vi.fn();
         transport.onclose = oncloseMock;
         transport.onerror = onerrorMock;
         transport.onmessage = onmessageMock;
@@ -89,7 +96,7 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
 
             protocol.request(request, mockSchema, {
                 onprogress: onProgressMock
@@ -124,7 +131,7 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
 
             protocol.request(request, mockSchema, {
                 onprogress: onProgressMock
@@ -187,7 +194,7 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
 
             protocol.request(request, mockSchema, {
                 onprogress: onProgressMock
@@ -211,10 +218,10 @@ describe('protocol tests', () => {
 
     describe('progress notification timeout behavior', () => {
         beforeEach(() => {
-            jest.useFakeTimers();
+            vi.useFakeTimers();
         });
         afterEach(() => {
-            jest.useRealTimers();
+            vi.useRealTimers();
         });
 
         test('should not reset timeout when resetTimeoutOnProgress is false', async () => {
@@ -223,14 +230,14 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
             const requestPromise = protocol.request(request, mockSchema, {
                 timeout: 1000,
                 resetTimeoutOnProgress: false,
                 onprogress: onProgressMock
             });
 
-            jest.advanceTimersByTime(800);
+            vi.advanceTimersByTime(800);
 
             if (transport.onmessage) {
                 transport.onmessage({
@@ -250,7 +257,7 @@ describe('protocol tests', () => {
                 total: 100
             });
 
-            jest.advanceTimersByTime(201);
+            vi.advanceTimersByTime(201);
 
             await expect(requestPromise).rejects.toThrow('Request timed out');
         });
@@ -261,13 +268,13 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
             const requestPromise = protocol.request(request, mockSchema, {
                 timeout: 1000,
                 resetTimeoutOnProgress: true,
                 onprogress: onProgressMock
             });
-            jest.advanceTimersByTime(800);
+            vi.advanceTimersByTime(800);
             if (transport.onmessage) {
                 transport.onmessage({
                     jsonrpc: '2.0',
@@ -284,7 +291,7 @@ describe('protocol tests', () => {
                 progress: 50,
                 total: 100
             });
-            jest.advanceTimersByTime(800);
+            vi.advanceTimersByTime(800);
             if (transport.onmessage) {
                 transport.onmessage({
                     jsonrpc: '2.0',
@@ -302,7 +309,7 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
             const requestPromise = protocol.request(request, mockSchema, {
                 timeout: 1000,
                 maxTotalTimeout: 150,
@@ -311,7 +318,7 @@ describe('protocol tests', () => {
             });
 
             // First progress notification should work
-            jest.advanceTimersByTime(80);
+            vi.advanceTimersByTime(80);
             if (transport.onmessage) {
                 transport.onmessage({
                     jsonrpc: '2.0',
@@ -328,7 +335,7 @@ describe('protocol tests', () => {
                 progress: 50,
                 total: 100
             });
-            jest.advanceTimersByTime(80);
+            vi.advanceTimersByTime(80);
             if (transport.onmessage) {
                 transport.onmessage({
                     jsonrpc: '2.0',
@@ -354,7 +361,7 @@ describe('protocol tests', () => {
                 timeout: 100,
                 resetTimeoutOnProgress: true
             });
-            jest.advanceTimersByTime(101);
+            vi.advanceTimersByTime(101);
             await expect(requestPromise).rejects.toThrow('Request timed out');
         });
 
@@ -364,7 +371,7 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
             const requestPromise = protocol.request(request, mockSchema, {
                 timeout: 1000,
                 resetTimeoutOnProgress: true,
@@ -373,7 +380,7 @@ describe('protocol tests', () => {
 
             // Simulate multiple progress updates
             for (let i = 1; i <= 3; i++) {
-                jest.advanceTimersByTime(800);
+                vi.advanceTimersByTime(800);
                 if (transport.onmessage) {
                     transport.onmessage({
                         jsonrpc: '2.0',
@@ -408,14 +415,14 @@ describe('protocol tests', () => {
             const mockSchema: ZodType<{ result: string }> = z.object({
                 result: z.string()
             });
-            const onProgressMock = jest.fn();
+            const onProgressMock = vi.fn();
 
             const requestPromise = protocol.request(request, mockSchema, {
                 timeout: 1000,
                 onprogress: onProgressMock
             });
 
-            jest.advanceTimersByTime(200);
+            vi.advanceTimersByTime(200);
 
             if (transport.onmessage) {
                 transport.onmessage({
@@ -437,7 +444,7 @@ describe('protocol tests', () => {
                 message: 'Initializing process...'
             });
 
-            jest.advanceTimersByTime(200);
+            vi.advanceTimersByTime(200);
 
             if (transport.onmessage) {
                 transport.onmessage({
@@ -666,11 +673,11 @@ describe('mergeCapabilities', () => {
 
         const additional: ClientCapabilities = {
             experimental: {
-                feature: true
+                feature: {}
             },
             elicitation: {},
             roots: {
-                newProp: true
+                listChanged: true
             }
         };
 
@@ -679,11 +686,10 @@ describe('mergeCapabilities', () => {
             sampling: {},
             elicitation: {},
             roots: {
-                listChanged: true,
-                newProp: true
+                listChanged: true
             },
             experimental: {
-                feature: true
+                feature: {}
             }
         });
     });
@@ -701,7 +707,7 @@ describe('mergeCapabilities', () => {
                 subscribe: true
             },
             prompts: {
-                newProp: true
+                listChanged: true
             }
         };
 
@@ -709,8 +715,7 @@ describe('mergeCapabilities', () => {
         expect(merged).toEqual({
             logging: {},
             prompts: {
-                listChanged: true,
-                newProp: true
+                listChanged: true
             },
             resources: {
                 subscribe: true
