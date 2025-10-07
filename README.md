@@ -4,6 +4,11 @@
 >
 > This is a fork of the [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) NPM package with the following changes.
 
+## Installation
+```
+pnpm add @enth/mcp-sdk
+```
+
 ## Fewer dependencies
 
 The core library no longer requires [Zod](https://github.com/colinhacks/zod), [zod-to-json-schema](https://github.com/StefanTerdell/zod-to-json-schema), or [Ajv](https://github.com/ajv-validator/ajv) to run. All built in schemas and validation are handled by static JSON Schema
@@ -11,7 +16,7 @@ objects and validation functions (which are available standalone in [@enth/mcp-s
 
 > [!WARNING]
 >
-> The Auth setup still uses Zod for now as that code needs a bigger refactor and is important to get right. Next steps for this library are to remove `express` as a hard dependency and refactor the auth code to play nicer with more popular auth setups and back end libraries.
+> The Auth setup still uses Zod for now as that code needs a bigger refactor and is important to get right. Next steps for this library are to remove `express` as a hard dependency and refactor the auth code to play nicer with more popular auth setups and back end libraries (as well as `express`).
 
 ## Smaller Size - less than $\frac{1}{4}$ the size
 
